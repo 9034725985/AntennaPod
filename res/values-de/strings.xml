@@ -3,6 +3,8 @@
   <!--Activitiy titles-->
   <string name="app_name">AntennaPod</string>
   <string name="feeds_label">Feeds</string>
+  <string name="podcasts_label">PODCASTS</string>
+  <string name="episodes_label">EPISODEN</string>
   <string name="new_label">Neu</string>
   <string name="settings_label">Einstellungen</string>
   <string name="add_new_feed_label">Feed hinzufügen</string>
@@ -10,6 +12,11 @@
   <string name="cancel_download_label">Download abbrechen</string>
   <string name="download_log_label">Download Log</string>
   <string name="playback_history_label">Zuletzt gespielt</string>
+  <!--Webview actions-->
+  <string name="open_in_browser_label">Im Browser öffnen</string>
+  <string name="copy_url_label">URL kopieren</string>
+  <string name="share_url_label">URL teilen</string>
+  <string name="copied_url_msg">URL wurde in die Zwischenablage kopiert.</string>
   <!--Playback history-->
   <string name="clear_history_label">Chronik löschen</string>
   <!--Other-->
@@ -45,6 +52,7 @@
   <!--actions on feeditems-->
   <string name="download_label">Herunterladen</string>
   <string name="play_label">Abspielen</string>
+  <string name="pause_label">Pausieren</string>
   <string name="stream_label">Streamen</string>
   <string name="remove_label">Entfernen</string>
   <string name="mark_read_label">Als gelesen markieren</string>
@@ -100,9 +108,8 @@
   <string name="show_download_log">Zeige Log</string>
   <string name="show_player_label">Zeige Player</string>
   <!--Queue operations-->
-  <string name="move_up_label">Nach oben bewegen</string>
-  <string name="move_down_label">Nach unten bewegen</string>
   <string name="clear_queue_label">Abspielliste leeren</string>
+  <string name="organize_queue_label">Abspielliste organisieren</string>
   <!--Flattr-->
   <string name="flattr_auth_label">Flattr Anmeldung</string>
   <string name="flattr_auth_explanation">Drücke den Button unten um den Authentifizierungsprozess zu starten. Du wirst dann zur Flattr-Anmeldeseite weitergeleitet, wo du gefragt wirst, AntennaPod die Erlaubnis zu geben, Dinge zu flattrn. Nachdem du die Erlaubnis erteilt hast, kehrst du automatisch zu diesem Bildschirm zurück.</string>
@@ -140,7 +147,7 @@
   <string name="refreshing_label">Aktualisiere</string>
   <string name="flattr_settings_label">Flattr Einstellungen</string>
   <string name="pref_flattr_auth_title">Flattr Anmeldung</string>
-  <string name="pref_flattr_auth_sum">Melde dich mit deinem Flattr Account an, um direkt in der App flattrn.</string>
+  <string name="pref_flattr_auth_sum">Melde dich mit deinem Flattr Account an, um direkt in der App zu flattrn.</string>
   <string name="pref_flattr_this_app_title">Flattr diese App</string>
   <string name="pref_flattr_this_app_sum">Unterstütze die Entwicklung von AntennaPod mit Flattr. Danke!</string>
   <string name="pref_revokeAccess_title">Zugriff entziehen</string>
@@ -198,4 +205,16 @@
   <string name="best_rating_label">Beste Bewertung</string>
   <string name="add_feed_label">Feed hinzufügen</string>
   <string name="miro_feed_added">Feed wird hinzugefügt</string>
+  <!--Directory chooser-->
+  <string name="selected_folder_label">Ausgewählter Ordner</string>
+  <string name="create_folder_label">Neuer Ordner</string>
+  <string name="choose_data_directory">Wähle Datenordner</string>
+  <string name="create_folder_msg">Neuen Ordner mit Namen \"%1$s\" erstellen?</string>
+  <string name="create_folder_success">Neuer Ordner angelegt</string>
+  <string name="create_folder_error_no_write_access">Kann in diesem Ordner nicht schreiben</string>
+  <string name="create_folder_error_already_exists">Ordner existiert bereits</string>
+  <string name="create_folder_error">Konnte Datenordner nicht erstellen</string>
+  <string name="folder_not_empty_dialog_title">Ordner ist nicht leer</string>
+  <string name="folder_not_empty_dialog_msg">Der ausgewählte Ordner ist nicht leer. Medien-Downloads und andere Daten werden direkt in diesem Ordner gespeichert. Trotzdem fortfahren?</string>
+  <string name="set_to_default_folder">Standardordner auswählen</string>
 </resources>

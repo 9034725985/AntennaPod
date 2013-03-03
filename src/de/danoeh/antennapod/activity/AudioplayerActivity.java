@@ -1,22 +1,26 @@
 package de.danoeh.antennapod.activity;
 
 import android.content.Intent;
+import android.content.res.TypedArray;
+import android.os.Bundle;
 import android.support.v4.app.Fragment;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.app.FragmentStatePagerAdapter;
-import android.support.v4.view.ViewPager;
+import android.support.v4.app.FragmentTransaction;
 import android.util.Log;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.widget.ArrayAdapter;
+import android.widget.ImageButton;
+import android.widget.ImageView.ScaleType;
 import android.widget.ListView;
 import android.widget.TextView;
 
 import com.actionbarsherlock.app.SherlockListFragment;
-import com.viewpagerindicator.TabPageIndicator;
+import com.actionbarsherlock.view.Window;
 
 import de.danoeh.antennapod.AppConfig;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.adapter.ChapterListAdapter;
+import de.danoeh.antennapod.asynctask.FeedImageLoader;
 import de.danoeh.antennapod.feed.Chapter;
 import de.danoeh.antennapod.feed.FeedMedia;
 import de.danoeh.antennapod.feed.SimpleChapter;
@@ -26,15 +30,49 @@ import de.danoeh.antennapod.service.PlaybackService;
 
 /** Activity for playing audio files. */
 public class AudioplayerActivity extends MediaplayerActivity {
+	private static final int POS_COVER = 0;
+	private static final int POS_DESCR = 1;
+	private static final int POS_CHAPTERS = 2;
+	private static final int NUM_CONTENT_FRAGMENTS = 3;
 
 	final String TAG = "AudioplayerActivity";
 
+	private Fragment[] detachedFragments;
+
 	private CoverFragment coverFragment;
 	private ItemDescriptionFragment descriptionFragment;
-	ViewPager viewpager;
-	TabPageIndicator tabs;
-	MediaPlayerPagerAdapter pagerAdapter;
-	TextView txtvStatus;
+	private SherlockListFragment chapterFragment;
+
+	private Fragment currentlyShownFragment;
+	private int currentlyShownPosition = -1;
+
+	private TextView txtvTitle;
+	private TextView txtvFeed;
+	private ImageButton butNavLeft;
+	private ImageButton butNavRight;
+
+	private void resetFragmentView() {
+		currentlyShownFragment = null;
+		coverFragment = null;
+		descriptionFragment = null;
+		chapterFragment = null;
+		currentlyShownPosition = -1;
+		detachedFragments = new Fragment[NUM_CONTENT_FRAGMENTS];
+	}
+
+	@Override
+	protected void onStop() {
+		super.onStop();
+		resetFragmentView();
+
+	}
+
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		requestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
+		super.onCreate(savedInstanceState);
+		detachedFragments = new Fragment[NUM_CONTENT_FRAGMENTS];
+	}
 
 	@Override
 	protected void onAwaitingVideoSurface() {
@@ -43,31 +81,171 @@ public class AudioplayerActivity extends MediaplayerActivity {
 
 	@Override
 	protected void postStatusMsg(int resId) {
-		txtvStatus.setText(resId);
-
+		setSupportProgressBarIndeterminateVisibility(resId == R.string.player_preparing_msg
+				|| resId == R.string.player_seeking_msg
+				|| resId == R.string.player_buffering_msg);
 	}
 
 	@Override
 	protected void clearStatusMsg() {
-		txtvStatus.setText("");
+		setSupportProgressBarIndeterminateVisibility(false);
+	}
 
+	/**
+	 * Changes the currently displayed fragment.
+	 * 
+	 * @param Must
+	 *            be POS_COVER, POS_DESCR, or POS_CHAPTERS
+	 * */
+	private void switchToFragment(int pos) {
+		if (AppConfig.DEBUG)
+			Log.d(TAG, "Switching contentView to position " + pos);
+		if (currentlyShownPosition != pos) {
+			FeedMedia media = controller.getMedia();
+			if (media != null) {
+				FragmentTransaction ft = getSupportFragmentManager()
+						.beginTransaction();
+				if (currentlyShownFragment != null) {
+					detachedFragments[currentlyShownPosition] = currentlyShownFragment;
+					ft.detach(currentlyShownFragment);
+				}
+				switch (pos) {
+				case POS_COVER:
+					if (coverFragment == null) {
+						Log.i(TAG, "Using new coverfragment");
+						coverFragment = CoverFragment.newInstance(media
+								.getItem());
+					}
+					currentlyShownFragment = coverFragment;
+					break;
+				case POS_DESCR:
+					if (descriptionFragment == null) {
+						descriptionFragment = ItemDescriptionFragment
+								.newInstance(media.getItem());
+					}
+					currentlyShownFragment = descriptionFragment;
+					break;
+				case POS_CHAPTERS:
+					if (chapterFragment == null) {
+						chapterFragment = new SherlockListFragment() {
+
+							@Override
+							public void onListItemClick(ListView l, View v,
+									int position, long id) {
+								super.onListItemClick(l, v, position, id);
+								Chapter chapter = (Chapter) this
+										.getListAdapter().getItem(position);
+								controller.seekToChapter(chapter);
+							}
+
+						};
+						chapterFragment.setListAdapter(new ChapterListAdapter(
+								AudioplayerActivity.this, 0, media.getItem()
+										.getChapters(), media));
+					}
+					currentlyShownFragment = chapterFragment;
+					break;
+				}
+				if (currentlyShownFragment != null) {
+					currentlyShownPosition = pos;
+					if (detachedFragments[pos] != null) {
+						if (AppConfig.DEBUG)
+							Log.d(TAG, "Reattaching fragment at position "
+									+ pos);
+						ft.attach(detachedFragments[pos]);
+					} else {
+						ft.add(R.id.contentView, currentlyShownFragment);
+					}
+					ft.setTransition(FragmentTransaction.TRANSIT_FRAGMENT_OPEN);
+					ft.commit();
+					updateNavButtonDrawable();
+				}
+			}
+		}
+	}
+
+	private void updateNavButtonDrawable() {
+		TypedArray drawables = obtainStyledAttributes(new int[] {
+				R.attr.navigation_shownotes, R.attr.navigation_chapters });
+		final FeedMedia media = controller.getMedia();
+		if (butNavLeft != null && butNavRight != null && media != null) {
+			switch (currentlyShownPosition) {
+			case POS_COVER:
+				butNavLeft.setScaleType(ScaleType.CENTER);
+				butNavLeft.setImageDrawable(drawables.getDrawable(0));
+				butNavRight.setImageDrawable(drawables.getDrawable(1));
+				break;
+			case POS_DESCR:
+				butNavLeft.setScaleType(ScaleType.CENTER_CROP);
+				butNavLeft.post(new Runnable() {
+
+					@Override
+					public void run() {
+						FeedImageLoader.getInstance().loadThumbnailBitmap(
+								media.getItem().getFeed().getImage(),
+								butNavLeft);
+					}
+				});
+				butNavRight.setImageDrawable(drawables.getDrawable(1));
+				break;
+			case POS_CHAPTERS:
+				butNavLeft.setScaleType(ScaleType.CENTER_CROP);
+				butNavLeft.post(new Runnable() {
+
+					@Override
+					public void run() {
+						FeedImageLoader.getInstance().loadThumbnailBitmap(
+								media.getItem().getFeed().getImage(),
+								butNavLeft);
+					}
+				});
+				butNavRight.setImageDrawable(drawables.getDrawable(0));
+				break;
+			}
+		}
 	}
 
 	@Override
 	protected void setupGUI() {
 		super.setupGUI();
-		txtvStatus = (TextView) findViewById(R.id.txtvStatus);
-		viewpager = (ViewPager) findViewById(R.id.viewpager);
-		tabs = (TabPageIndicator) findViewById(R.id.tabs);
-		pagerAdapter = new MediaPlayerPagerAdapter(getSupportFragmentManager());
-		viewpager.setAdapter(pagerAdapter);
-		tabs.setViewPager(viewpager);
+		resetFragmentView();
+		txtvTitle = (TextView) findViewById(R.id.txtvTitle);
+		txtvFeed = (TextView) findViewById(R.id.txtvFeed);
+		butNavLeft = (ImageButton) findViewById(R.id.butNavLeft);
+		butNavRight = (ImageButton) findViewById(R.id.butNavRight);
+
+		butNavLeft.setOnClickListener(new OnClickListener() {
+
+			@Override
+			public void onClick(View v) {
+				if (currentlyShownFragment == null
+						|| currentlyShownPosition == POS_DESCR) {
+					switchToFragment(POS_COVER);
+				} else if (currentlyShownPosition == POS_COVER) {
+					switchToFragment(POS_DESCR);
+				} else if (currentlyShownPosition == POS_CHAPTERS) {
+					switchToFragment(POS_COVER);
+				}
+			}
+		});
+
+		butNavRight.setOnClickListener(new OnClickListener() {
+
+			@Override
+			public void onClick(View v) {
+				if (currentlyShownPosition == POS_CHAPTERS) {
+					switchToFragment(POS_DESCR);
+				} else {
+					switchToFragment(POS_CHAPTERS);
+				}
+			}
+		});
 	}
 
 	@Override
 	protected void onPositionObserverUpdate() {
 		super.onPositionObserverUpdate();
-		pagerAdapter.notifyMediaPositionChanged();
+		notifyMediaPositionChanged();
 	}
 
 	@Override
@@ -75,114 +253,31 @@ public class AudioplayerActivity extends MediaplayerActivity {
 		super.loadMediaInfo();
 		final FeedMedia media = controller.getMedia();
 		if (media != null) {
-			if (media.getItem().getChapters() != null
-					&& pagerAdapter.getCount() < MediaPlayerPagerAdapter.NUM_ITEMS_WITH_CHAPTERS) {
-				pagerAdapter
-						.setNumItems(MediaPlayerPagerAdapter.NUM_ITEMS_WITH_CHAPTERS);
+			txtvTitle.setText(media.getItem().getTitle());
+			txtvFeed.setText(media.getItem().getFeed().getTitle());
+			if (media.getItem().getChapters() != null) {
+				butNavRight.setVisibility(View.VISIBLE);
+			} else {
+				butNavRight.setVisibility(View.GONE);
 			}
-			pagerAdapter.notifyDataSetChanged();
+
 		}
+		if (currentlyShownPosition == -1) {
+			switchToFragment(POS_COVER);
+		}
+		if (currentlyShownFragment instanceof AudioplayerContentFragment) {
+			((AudioplayerContentFragment) currentlyShownFragment)
+					.onDataSetChanged(media);
+		}
+
 	}
 
-	public class MediaPlayerPagerAdapter extends FragmentStatePagerAdapter {
-		private int numItems;
-
-		private SherlockListFragment sCChapterFragment;
-
-		private static final int POS_COVER = 0;
-		private static final int POS_DESCR = 1;
-		private static final int POS_CHAPTERS = 2;
-
-		public static final int NUM_ITEMS_WITH_CHAPTERS = 3;
-		public static final int NUM_ITEMS_WITHOUT_CHAPTERS = 2;
-
-		public MediaPlayerPagerAdapter(FragmentManager fm) {
-			super(fm);
-			numItems = NUM_ITEMS_WITHOUT_CHAPTERS;
-			FeedMedia media = AudioplayerActivity.this.controller.getMedia();
-			if (media != null && media.getItem().getChapters() != null) {
-				numItems = NUM_ITEMS_WITH_CHAPTERS;
-			}
+	public void notifyMediaPositionChanged() {
+		if (chapterFragment != null) {
+			ArrayAdapter<SimpleChapter> adapter = (ArrayAdapter<SimpleChapter>) chapterFragment
+					.getListAdapter();
+			adapter.notifyDataSetChanged();
 		}
-
-		@Override
-		public Fragment getItem(int position) {
-			FeedMedia media = controller.getMedia();
-			if (media != null) {
-				switch (position) {
-				case POS_COVER:
-					AudioplayerActivity.this.coverFragment = CoverFragment
-							.newInstance(media.getItem());
-					return AudioplayerActivity.this.coverFragment;
-				case POS_DESCR:
-					AudioplayerActivity.this.descriptionFragment = ItemDescriptionFragment
-							.newInstance(media.getItem());
-					return AudioplayerActivity.this.descriptionFragment;
-				case POS_CHAPTERS:
-					sCChapterFragment = new SherlockListFragment() {
-
-						@Override
-						public void onListItemClick(ListView l, View v,
-								int position, long id) {
-							super.onListItemClick(l, v, position, id);
-							Chapter chapter = (Chapter) this.getListAdapter()
-									.getItem(position);
-							controller.seekToChapter(chapter);
-						}
-
-					};
-
-					sCChapterFragment.setListAdapter(new ChapterListAdapter(
-							AudioplayerActivity.this, 0, media.getItem()
-									.getChapters(), media));
-
-					return sCChapterFragment;
-				default:
-					return CoverFragment.newInstance(null);
-				}
-			} else {
-				return CoverFragment.newInstance(null);
-			}
-		}
-
-		@Override
-		public CharSequence getPageTitle(int position) {
-			switch (position) {
-			case POS_COVER:
-				return AudioplayerActivity.this.getString(R.string.cover_label);
-			case POS_DESCR:
-				return AudioplayerActivity.this
-						.getString(R.string.shownotes_label);
-			case POS_CHAPTERS:
-				return AudioplayerActivity.this
-						.getString(R.string.chapters_label);
-			default:
-				return super.getPageTitle(position);
-			}
-		}
-
-		@Override
-		public int getCount() {
-			return numItems;
-		}
-
-		public void setNumItems(int numItems) {
-			this.numItems = numItems;
-		}
-
-		@Override
-		public int getItemPosition(Object object) {
-			return POSITION_UNCHANGED;
-		}
-
-		public void notifyMediaPositionChanged() {
-			if (sCChapterFragment != null) {
-				ArrayAdapter<SimpleChapter> adapter = (ArrayAdapter<SimpleChapter>) sCChapterFragment
-						.getListAdapter();
-				adapter.notifyDataSetChanged();
-			}
-		}
-
 	}
 
 	@Override
@@ -204,6 +299,10 @@ public class AudioplayerActivity extends MediaplayerActivity {
 	@Override
 	protected void onBufferEnd() {
 		clearStatusMsg();
+	}
+
+	public interface AudioplayerContentFragment {
+		public void onDataSetChanged(FeedMedia media);
 	}
 
 }

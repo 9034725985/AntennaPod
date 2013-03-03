@@ -11,10 +11,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
-import android.preference.PreferenceActivity;
 import android.preference.PreferenceManager;
 import android.util.Log;
-import de.danoeh.antennapod.activity.OpmlImportActivity;
+import de.danoeh.antennapod.activity.OpmlImportFromPathActivity;
 import de.danoeh.antennapod.asynctask.FeedImageLoader;
 import de.danoeh.antennapod.feed.FeedManager;
 import de.danoeh.antennapod.feed.FeedMedia;
@@ -37,6 +36,7 @@ public class PodcastApp extends Application implements
 	public static final String PREF_DISPLAY_ONLY_EPISODES = "prefDisplayOnlyEpisodes";
 	public static final String PREF_AUTO_DELETE = "prefAutoDelete";
 	public static final String PREF_THEME = "prefTheme";
+	public static final String PREF_DATA_FOLDER = "prefDataFolder";
 
 	private static float LOGICAL_DENSITY;
 
@@ -45,7 +45,7 @@ public class PodcastApp extends Application implements
 	private boolean displayOnlyEpisodes;
 
 	private static long currentlyPlayingMediaId;
-	
+
 	/** Resource id of the currently selected theme. */
 	private static int theme;
 
@@ -93,7 +93,7 @@ public class PodcastApp extends Application implements
 	 * available
 	 */
 	private void createImportDirectory() {
-		File importDir = getExternalFilesDir(OpmlImportActivity.IMPORT_DIR);
+		File importDir = getDataFolder(this, OpmlImportFromPathActivity.IMPORT_DIR);
 		if (importDir != null) {
 			if (importDir.exists()) {
 				if (AppConfig.DEBUG)
@@ -190,14 +190,15 @@ public class PodcastApp extends Application implements
 				|| (getResources().getConfiguration().screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK) == Configuration.SCREENLAYOUT_SIZE_XLARGE;
 
 	}
-	
+
 	public static int getThemeResourceId() {
 		return theme;
 	}
-	
+
 	/** Read value of prefTheme and determine the correct resource id. */
 	private void readThemeValue() {
-		SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+		SharedPreferences prefs = PreferenceManager
+				.getDefaultSharedPreferences(this);
 		int prefTheme = Integer.parseInt(prefs.getString(PREF_THEME, "0"));
 		switch (prefTheme) {
 		case 0:
@@ -207,5 +208,75 @@ public class PodcastApp extends Application implements
 			theme = R.style.Theme_AntennaPod_Dark;
 			break;
 		}
+	}
+
+	/**
+	 * Return the folder where the app stores all of its data. This method will
+	 * return the standard data folder if none has been set by the user.
+	 * 
+	 * @param type
+	 *            The name of the folder inside the data folder. May be null
+	 *            when accessing the root of the data folder.
+	 * @return The data folder that has been requested or null if the folder
+	 *         could not be created.
+	 */
+	public static File getDataFolder(Context context, String type) {
+		SharedPreferences prefs = PreferenceManager
+				.getDefaultSharedPreferences(context.getApplicationContext());
+		String strDir = prefs.getString(PREF_DATA_FOLDER, null);
+		if (strDir == null) {
+			if (AppConfig.DEBUG)
+				Log.d(TAG, "Using default data folder");
+			return context.getExternalFilesDir(type);
+		} else {
+			File dataDir = new File(strDir);
+			if (!dataDir.exists()) {
+				if (!dataDir.mkdir()) {
+					Log.w(TAG, "Could not create data folder");
+					return null;
+				}
+			}
+
+			if (type == null) {
+				return dataDir;
+			} else {
+				// handle path separators
+				String[] dirs = type.split("/");
+				for (int i = 0; i < dirs.length; i++) {
+					if (dirs.length > 0) {
+						if (i < dirs.length - 1) {
+							dataDir = getDataFolder(context, dirs[i]);
+							if (dataDir == null) {
+								return null;
+							}
+						}
+						type = dirs[i];
+					}
+				}
+				File typeDir = new File(dataDir, type);
+				if (!typeDir.exists()) {
+					if (dataDir.canWrite()) {
+						if (!typeDir.mkdir()) {
+							Log.e(TAG, "Could not create data folder named "
+									+ type);
+							return null;
+						}
+					}
+				}
+				return typeDir;
+			}
+
+		}
+	}
+
+	public void setDataFolder(String dir) {
+		if (AppConfig.DEBUG)
+			Log.d(TAG, "Result from DirectoryChooser: " + dir);
+		SharedPreferences prefs = PreferenceManager
+				.getDefaultSharedPreferences(this);
+		SharedPreferences.Editor editor = prefs.edit();
+		editor.putString(PodcastApp.PREF_DATA_FOLDER, dir);
+		editor.commit();
+		createImportDirectory();
 	}
 }

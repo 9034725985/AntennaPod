@@ -2,7 +2,10 @@ package de.danoeh.antennapod.util.id3reader;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.PushbackInputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+
+import org.apache.commons.io.IOUtils;
 
 import de.danoeh.antennapod.util.id3reader.model.FrameHeader;
 import de.danoeh.antennapod.util.id3reader.model.TagHeader;
@@ -21,8 +24,7 @@ public class ID3Reader {
 
 	protected int readerPosition;
 
-	private static final char[] LITTLE_ENDIAN_BOM = { 0xff, 0xfe };
-	private static final char[] BIG_ENDIAN_BOM = { 0xfe, 0xff };
+	private static final byte ENCODING_UNICODE = 1;
 
 	public ID3Reader() {
 	}
@@ -48,7 +50,13 @@ public class ID3Reader {
 					} else {
 						rc = onStartFrameHeader(frameHeader, input);
 						if (rc == ACTION_SKIP) {
-							skipBytes(input, frameHeader.getSize());
+
+							if (frameHeader.getSize() + readerPosition > tagHeader
+									.getSize()) {
+								break;
+							} else {
+								skipBytes(input, frameHeader.getSize());
+							}
 						}
 					}
 				}
@@ -100,13 +108,10 @@ public class ID3Reader {
 	 * changes the readerPosition-attribute.
 	 */
 	protected void skipBytes(InputStream input, int number) throws IOException {
-		int skipped = 0;
 		if (number <= 0) {
 			number = 1;
 		}
-		while (skipped < number) {
-			skipped += input.skip(number - skipped);
-		}
+		IOUtils.skipFully(input, number);
 
 		readerPosition += number;
 	}
@@ -147,19 +152,23 @@ public class ID3Reader {
 
 	protected String readString(InputStream input, int max) throws IOException,
 			ID3ReaderException {
-		char[] bom = readBytes(input, 2);
-		if (bom == LITTLE_ENDIAN_BOM || bom == BIG_ENDIAN_BOM) {
-			return readUnicodeString(input, bom, max);
+		if (max > 0) {
+			char[] encoding = readBytes(input, 1);
+			max--;
+			
+			if (encoding[0] == ENCODING_UNICODE) {
+				return readUnicodeString(input, max);
+			} else {
+				return readISOString(input, max);
+			}
 		} else {
-			PushbackInputStream pi = new PushbackInputStream(input, 2);
-			pi.unread(bom[1]);
-			pi.unread(bom[0]);
-			return readISOString(pi, max);
+			return "";
 		}
 	}
 
-	private String readISOString(InputStream input, int max)
+	protected String readISOString(InputStream input, int max)
 			throws IOException, ID3ReaderException {
+
 		int bytesRead = 0;
 		StringBuilder builder = new StringBuilder();
 		char c;
@@ -169,22 +178,12 @@ public class ID3Reader {
 		return builder.toString();
 	}
 
-	private String readUnicodeString(InputStream input, char[] bom, int max)
+	private String readUnicodeString(InputStream input, int max)
 			throws IOException, ID3ReaderException {
-		StringBuffer builder = new StringBuffer();
-		char c1 = (char) input.read();
-		char c2 = (char) input.read();
-		int bytesRead = 2;
-		while ((c1 > 0 && c2 > 0) && ++bytesRead <= max) {
-
-			builder.append(c1);
-			c1 = c2;
-			c2 = (char) input.read();
-		}
-		if (bom == LITTLE_ENDIAN_BOM) {
-			builder.reverse();
-		}
-		return builder.toString();
+		byte[] buffer = new byte[max];
+		IOUtils.readFully(input, buffer);
+		Charset charset = Charset.forName("UTF-16");
+		return charset.newDecoder().decode(ByteBuffer.wrap(buffer)).toString();
 	}
 
 	public int onStartTagHeader(TagHeader header) {

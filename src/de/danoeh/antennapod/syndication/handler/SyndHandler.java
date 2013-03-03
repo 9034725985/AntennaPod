@@ -7,13 +7,14 @@ import org.xml.sax.helpers.DefaultHandler;
 import android.util.Log;
 import de.danoeh.antennapod.AppConfig;
 import de.danoeh.antennapod.feed.Feed;
+import de.danoeh.antennapod.syndication.namespace.NSContent;
+import de.danoeh.antennapod.syndication.namespace.NSITunes;
+import de.danoeh.antennapod.syndication.namespace.NSMedia;
+import de.danoeh.antennapod.syndication.namespace.NSRSS20;
+import de.danoeh.antennapod.syndication.namespace.NSSimpleChapters;
 import de.danoeh.antennapod.syndication.namespace.Namespace;
 import de.danoeh.antennapod.syndication.namespace.SyndElement;
 import de.danoeh.antennapod.syndication.namespace.atom.NSAtom;
-import de.danoeh.antennapod.syndication.namespace.content.NSContent;
-import de.danoeh.antennapod.syndication.namespace.itunes.NSITunes;
-import de.danoeh.antennapod.syndication.namespace.rss20.NSRSS20;
-import de.danoeh.antennapod.syndication.namespace.simplechapters.NSSimpleChapters;
 
 /** Superclass for all SAX Handlers which process Syndication formats */
 public class SyndHandler extends DefaultHandler {
@@ -97,17 +98,23 @@ public class SyndHandler extends DefaultHandler {
 				if (AppConfig.DEBUG)
 					Log.d(TAG, "Recognized ITunes namespace");
 			} else if (uri.equals(NSSimpleChapters.NSURI)
-					&& prefix.equals(NSSimpleChapters.NSTAG)) {
+					&& prefix.matches(NSSimpleChapters.NSTAG)) {
 				state.namespaces.put(uri, new NSSimpleChapters());
 				if (AppConfig.DEBUG)
 					Log.d(TAG, "Recognized SimpleChapters namespace");
+			} else if (uri.equals(NSMedia.NSURI)
+					&& prefix.equals(NSMedia.NSTAG)) {
+				state.namespaces.put(uri, new NSMedia());
+				if (AppConfig.DEBUG)
+					Log.d(TAG, "Recognized media namespace");
 			}
 		}
 	}
 
 	private Namespace getHandlingNamespace(String uri, String qName) {
 		Namespace handler = state.namespaces.get(uri);
-		if (handler == null && !state.defaultNamespaces.empty() && !qName.contains(":")) {
+		if (handler == null && !state.defaultNamespaces.empty()
+				&& !qName.contains(":")) {
 			handler = state.defaultNamespaces.peek();
 		}
 		return handler;

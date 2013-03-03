@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.util.Log;
 import android.webkit.URLUtil;
 import de.danoeh.antennapod.AppConfig;
+import de.danoeh.antennapod.PodcastApp;
 import de.danoeh.antennapod.feed.Feed;
 import de.danoeh.antennapod.feed.FeedFile;
 import de.danoeh.antennapod.feed.FeedImage;
@@ -49,10 +50,10 @@ public class DownloadRequester {
 	private void download(Context context, FeedFile item, File dest,
 			boolean overwriteIfExists) {
 		if (!isDownloadingFile(item)) {
-			if (dest.exists()) {
+			if (!isFilenameAvailable(dest.toString()) || dest.exists()) {
 				if (AppConfig.DEBUG)
-					Log.d(TAG, "File already exists.");
-				if (overwriteIfExists) {
+					Log.d(TAG, "Filename already used.");
+				if (isFilenameAvailable(dest.toString()) && overwriteIfExists) {
 					boolean result = dest.delete();
 					if (AppConfig.DEBUG)
 						Log.d(TAG, "Deleting file. Result: " + result);
@@ -69,7 +70,7 @@ public class DownloadRequester {
 						if (AppConfig.DEBUG)
 							Log.d(TAG, "Testing filename " + newName);
 						newDest = new File(dest.getParent(), newName);
-						if (!newDest.exists()) {
+						if (!newDest.exists() && isFilenameAvailable(newDest.toString())) {
 							if (AppConfig.DEBUG)
 								Log.d(TAG, "File doesn't exist yet. Using "
 										+ newName);
@@ -106,6 +107,24 @@ public class DownloadRequester {
 			Log.e(TAG, "URL " + item.getDownload_url()
 					+ " is already being downloaded");
 		}
+	}
+
+	/**
+	 * Returns true if a filename is available and false if it has already been
+	 * taken by another requested download.
+	 */
+	private boolean isFilenameAvailable(String path) {
+		for (String key : downloads.keySet()) {
+			FeedFile f = downloads.get(key);
+			if (f.getFile_url().equals(path)) {
+				if (AppConfig.DEBUG)
+					Log.d(TAG, path
+							+ " is already used by another requested download");
+				return false;
+			}
+		}
+		if (AppConfig.DEBUG) Log.d(TAG, path + " is available as a download destination");
+		return true;
 	}
 
 	public void downloadFeed(Context context, Feed feed)
@@ -263,7 +282,7 @@ public class DownloadRequester {
 
 	private File getExternalFilesDirOrThrowException(Context context,
 			String type) throws DownloadRequestException {
-		File result = context.getExternalFilesDir(type);
+		File result = PodcastApp.getDataFolder(context, type);
 		if (result == null) {
 			throw new DownloadRequestException(
 					"Failed to access external storage");

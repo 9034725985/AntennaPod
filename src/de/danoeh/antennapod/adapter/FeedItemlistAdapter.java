@@ -12,42 +12,37 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 import android.widget.Adapter;
-import android.widget.ArrayAdapter;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
-import de.danoeh.antennapod.PodcastApp;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.feed.FeedItem;
 import de.danoeh.antennapod.feed.FeedManager;
 import de.danoeh.antennapod.feed.MediaType;
 import de.danoeh.antennapod.storage.DownloadRequester;
 import de.danoeh.antennapod.util.Converter;
-import de.danoeh.antennapod.util.EpisodeFilter;
 import de.danoeh.antennapod.util.ThemeUtils;
 
-public class FeedItemlistAdapter extends ArrayAdapter<FeedItem> {
-	private OnClickListener onButActionClicked;
+public class FeedItemlistAdapter extends AbstractFeedItemlistAdapter {
+	private ActionButtonCallback callback;
 	private boolean showFeedtitle;
 	private int selectedItemIndex;
-	private List<FeedItem> objects;
 
 	public static final int SELECTION_NONE = -1;
 
 	public FeedItemlistAdapter(Context context, int textViewResourceId,
-			List<FeedItem> objects, OnClickListener onButActionClicked,
+			List<FeedItem> objects, ActionButtonCallback callback,
 			boolean showFeedtitle) {
 		super(context, textViewResourceId, objects);
-		this.objects = objects;
-		this.onButActionClicked = onButActionClicked;
+		this.callback = callback;
 		this.showFeedtitle = showFeedtitle;
 		this.selectedItemIndex = SELECTION_NONE;
 	}
 
 	@Override
-	public View getView(int position, View convertView, ViewGroup parent) {
+	public View getView(final int position, View convertView, ViewGroup parent) {
 		Holder holder;
-		FeedItem item = getItem(position);
+		final FeedItem item = getItem(position);
 
 		if (convertView == null) {
 			holder = new Holder();
@@ -73,8 +68,12 @@ public class FeedItemlistAdapter extends ArrayAdapter<FeedItem> {
 				holder.feedtitle = (TextView) convertView
 						.findViewById(R.id.txtvFeedname);
 			}
-			holder.statusLabel = (View) convertView
-					.findViewById(R.id.vStatusLabel);
+			holder.statusPlaying = (View) convertView
+					.findViewById(R.id.statusPlaying);
+			holder.statusUnread = (View) convertView
+					.findViewById(R.id.statusUnread);
+			holder.statusInProgress = (TextView) convertView
+					.findViewById(R.id.statusInProgress);
 
 			convertView.setTag(holder);
 		} else {
@@ -98,26 +97,26 @@ public class FeedItemlistAdapter extends ArrayAdapter<FeedItem> {
 			FeedItem.State state = item.getState();
 			switch (state) {
 			case PLAYING:
-				holder.title.setTypeface(Typeface.DEFAULT_BOLD);
-				holder.statusLabel.setBackgroundColor(convertView
-						.getResources().getColor(R.color.status_playing));
-				holder.statusLabel.setVisibility(View.VISIBLE);
+				holder.statusPlaying.setVisibility(View.VISIBLE);
+				holder.statusUnread.setVisibility(View.GONE);
+				holder.statusInProgress.setVisibility(View.GONE);
 				break;
 			case IN_PROGRESS:
-				holder.title.setTypeface(Typeface.DEFAULT_BOLD);
-				holder.statusLabel.setBackgroundColor(convertView
-						.getResources().getColor(R.color.status_progress));
-				holder.statusLabel.setVisibility(View.VISIBLE);
+				holder.statusPlaying.setVisibility(View.GONE);
+				holder.statusUnread.setVisibility(View.GONE);
+				holder.statusInProgress.setVisibility(View.VISIBLE);
+				holder.statusInProgress.setText(Converter
+						.getDurationStringLong(item.getMedia().getPosition()));
 				break;
 			case NEW:
-				holder.title.setTypeface(Typeface.DEFAULT_BOLD);
-				holder.statusLabel.setBackgroundColor(convertView
-						.getResources().getColor(R.color.status_unread));
-				holder.statusLabel.setVisibility(View.VISIBLE);
+				holder.statusPlaying.setVisibility(View.GONE);
+				holder.statusUnread.setVisibility(View.VISIBLE);
+				holder.statusInProgress.setVisibility(View.GONE);
 				break;
 			default:
-				holder.title.setTypeface(Typeface.DEFAULT);
-				holder.statusLabel.setVisibility(View.INVISIBLE);
+				holder.statusPlaying.setVisibility(View.GONE);
+				holder.statusUnread.setVisibility(View.GONE);
+				holder.statusInProgress.setVisibility(View.GONE);
 				break;
 			}
 
@@ -178,7 +177,14 @@ public class FeedItemlistAdapter extends ArrayAdapter<FeedItem> {
 			}
 
 			holder.butAction.setFocusable(false);
-			holder.butAction.setOnClickListener(onButActionClicked);
+			holder.butAction.setOnClickListener(new OnClickListener() {
+
+				@Override
+				public void onClick(View v) {
+					callback.onActionButtonPressed(item);
+				}
+			});
+
 		} else {
 			convertView.setVisibility(View.GONE);
 		}
@@ -196,7 +202,9 @@ public class FeedItemlistAdapter extends ArrayAdapter<FeedItem> {
 		ImageView type;
 		ImageView downloading;
 		ImageButton butAction;
-		View statusLabel;
+		View statusUnread;
+		View statusPlaying;
+		TextView statusInProgress;
 	}
 
 	public int getSelectedItemIndex() {
@@ -206,24 +214,6 @@ public class FeedItemlistAdapter extends ArrayAdapter<FeedItem> {
 	public void setSelectedItemIndex(int selectedItemIndex) {
 		this.selectedItemIndex = selectedItemIndex;
 		notifyDataSetChanged();
-	}
-
-	@Override
-	public int getCount() {
-		if (PodcastApp.getInstance().displayOnlyEpisodes()) {
-			return EpisodeFilter.countItemsWithEpisodes(objects);
-		} else {
-			return super.getCount();
-		}
-	}
-
-	@Override
-	public FeedItem getItem(int position) {
-		if (PodcastApp.getInstance().displayOnlyEpisodes()) {
-			return EpisodeFilter.accessEpisodeByIndex(objects, position);
-		} else {
-			return super.getItem(position);
-		}
 	}
 
 }
