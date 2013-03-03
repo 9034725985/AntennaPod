@@ -1,5 +1,7 @@
 package de.danoeh.antennapod.feed;
 
+import java.io.File;
+
 /** Represents a component of a Feed that has to be downloaded */
 public abstract class FeedFile extends FeedComponent {
 
@@ -25,6 +27,43 @@ public abstract class FeedFile extends FeedComponent {
 	public abstract String getHumanReadableIdentifier();
 
 	public abstract int getTypeAsInt();
+
+	/**
+	 * Update this FeedFile's attributes with the attributes from another
+	 * FeedFile. This method should only update attributes which where read from
+	 * the feed.
+	 */
+	public void updateFromOther(FeedFile other) {
+		super.updateFromOther(other);
+		this.download_url = other.download_url;
+	}
+
+	/**
+	 * Compare's this FeedFile's attribute values with another FeedFile's
+	 * attribute values. This method will only compare attributes which were
+	 * read from the feed.
+	 * 
+	 * @return true if attribute values are different, false otherwise
+	 */
+	public boolean compareWithOther(FeedFile other) {
+		if (super.compareWithOther(other)) {
+			return true;
+		}
+		if (!download_url.equals(other.download_url)) {
+			return true;
+		}
+		return false;
+	}
+	
+	/** Returns true if the file exists at file_url. */
+	public boolean fileExists() {
+		if (file_url == null) {
+			return false;
+		} else {
+			File f = new File(file_url);
+			return f.exists();
+		}
+	}
 
 	public String getFile_url() {
 		return file_url;

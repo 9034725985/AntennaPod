@@ -11,6 +11,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import android.annotation.SuppressLint;
+import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.BroadcastReceiver;
@@ -47,6 +48,7 @@ import de.danoeh.antennapod.feed.FeedMedia;
 import de.danoeh.antennapod.feed.MediaType;
 import de.danoeh.antennapod.receiver.MediaButtonReceiver;
 import de.danoeh.antennapod.receiver.PlayerWidget;
+import de.danoeh.antennapod.util.BitmapDecoder;
 import de.danoeh.antennapod.util.ChapterUtils;
 
 /** Controls the MediaPlayer that plays a FeedMedia-file */
@@ -125,7 +127,6 @@ public class PlaybackService extends Service {
 	public static boolean isRunning = false;
 
 	private static final int NOTIFICATION_ID = 1;
-	private NotificationCompat.Builder notificationBuilder;
 
 	private AudioManager audioManager;
 	private ComponentName mediaButtonReceiver;
@@ -292,6 +293,8 @@ public class PlaybackService extends Service {
 				Intent.ACTION_HEADSET_PLUG));
 		registerReceiver(shutdownReceiver, new IntentFilter(
 				ACTION_SHUTDOWN_PLAYBACK_SERVICE));
+		registerReceiver(audioBecomingNoisy, new IntentFilter(
+				AudioManager.ACTION_AUDIO_BECOMING_NOISY));
 
 	}
 
@@ -321,6 +324,7 @@ public class PlaybackService extends Service {
 		disableSleepTimer();
 		unregisterReceiver(headsetDisconnected);
 		unregisterReceiver(shutdownReceiver);
+		unregisterReceiver(audioBecomingNoisy);
 		if (android.os.Build.VERSION.SDK_INT >= 14) {
 			audioManager.unregisterRemoteControlClient(remoteControlClient);
 		}
@@ -445,7 +449,7 @@ public class PlaybackService extends Service {
 		case KeyEvent.KEYCODE_HEADSETHOOK:
 		case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
 			if (status == PlayerStatus.PLAYING) {
-				pause(false, true);
+				pause(true, true);
 			} else if (status == PlayerStatus.PAUSED) {
 				play();
 			} else if (status == PlayerStatus.PREPARING) {
@@ -465,7 +469,7 @@ public class PlaybackService extends Service {
 			break;
 		case KeyEvent.KEYCODE_MEDIA_PAUSE:
 			if (status == PlayerStatus.PLAYING) {
-				pause(false, true);
+				pause(true, true);
 			}
 			break;
 		}
@@ -792,6 +796,7 @@ public class PlaybackService extends Service {
 			player.pause();
 			if (abandonFocus) {
 				audioManager.abandonAudioFocus(audioFocusChangeListener);
+				pausedBecauseOfTransientAudiofocusLoss = false;
 				disableSleepTimer();
 			}
 			cancelPositionSaver();
@@ -904,22 +909,57 @@ public class PlaybackService extends Service {
 	}
 
 	/** Prepares notification and starts the service in the foreground. */
+	@SuppressLint("NewApi")
 	private void setupNotification() {
 		PendingIntent pIntent = PendingIntent.getActivity(this, 0,
 				PlaybackService.getPlayerActivityIntent(this),
 				PendingIntent.FLAG_UPDATE_CURRENT);
 
-		Bitmap icon = BitmapFactory.decodeResource(getResources(),
-				R.drawable.ic_stat_antenna);
-		notificationBuilder = new NotificationCompat.Builder(this)
-				.setContentTitle(
-						getString(R.string.playbackservice_notification_title))
-				.setContentText(
-						getString(R.string.playbackservice_notification_content))
-				.setOngoing(true).setContentIntent(pIntent).setLargeIcon(icon)
-				.setSmallIcon(R.drawable.ic_stat_antenna);
+		Bitmap icon = null;
+		if (android.os.Build.VERSION.SDK_INT >= 11) {
+			if (media != null && media.getImage() != null
+					&& media.getImage().getFile_url() != null) {
+				int iconSize = getResources().getDimensionPixelSize(
+						android.R.dimen.notification_large_icon_width);
+				icon = BitmapDecoder.decodeBitmap(iconSize, media.getImage()
+						.getFile_url());
+			}
+		}
+		if (icon == null) {
+			icon = BitmapFactory.decodeResource(getResources(),
+					R.drawable.ic_stat_antenna);
+		}
 
-		startForeground(NOTIFICATION_ID, notificationBuilder.getNotification());
+		String contentText = media.getItem().getFeed().getTitle();
+		String contentTitle = media.getItem().getTitle();
+		Notification notification = null;
+		if (android.os.Build.VERSION.SDK_INT >= 16) {
+			Intent pauseButtonIntent = new Intent(this, PlaybackService.class);
+			pauseButtonIntent.putExtra(MediaButtonReceiver.EXTRA_KEYCODE,
+					KeyEvent.KEYCODE_MEDIA_PAUSE);
+			PendingIntent pauseButtonPendingIntent = PendingIntent
+					.getService(this, 0, pauseButtonIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+			Notification.Builder notificationBuilder = new Notification.Builder(
+					this)
+					.setContentTitle(contentTitle)
+					.setContentText(contentText)
+					.setOngoing(true)
+					.setContentIntent(pIntent)
+					.setLargeIcon(icon)
+					.setSmallIcon(R.drawable.ic_stat_antenna)
+					.addAction(android.R.drawable.ic_media_pause,
+							getString(R.string.pause_label),
+							pauseButtonPendingIntent);
+			notification = notificationBuilder.build();
+		} else {
+			NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(
+					this).setContentTitle(contentTitle)
+					.setContentText(contentText).setOngoing(true)
+					.setContentIntent(pIntent).setLargeIcon(icon)
+					.setSmallIcon(R.drawable.ic_stat_antenna);
+			notification = notificationBuilder.getNotification();
+		}
+		startForeground(NOTIFICATION_ID, notification);
 		if (AppConfig.DEBUG)
 			Log.d(TAG, "Notification set up");
 	}
@@ -1089,21 +1129,10 @@ public class PlaybackService extends Service {
 				if (state != -1) {
 					if (AppConfig.DEBUG)
 						Log.d(TAG, "Headset plug event. State is " + state);
-					boolean pauseOnDisconnect = PreferenceManager
-							.getDefaultSharedPreferences(
-									getApplicationContext())
-							.getBoolean(
-									PodcastApp.PREF_PAUSE_ON_HEADSET_DISCONNECT,
-									false);
-					if (AppConfig.DEBUG)
-						Log.d(TAG, "pauseOnDisconnect preference is "
-								+ pauseOnDisconnect);
-					if (state == UNPLUGGED && pauseOnDisconnect
-							&& status == PlayerStatus.PLAYING) {
+					if (state == UNPLUGGED && status == PlayerStatus.PLAYING) {
 						if (AppConfig.DEBUG)
-							Log.d(TAG,
-									"Pausing playback because headset was disconnected");
-						pause(false, true);
+							Log.d(TAG, "Headset was unplugged during playback.");
+						pauseIfPauseOnDisconnect();
 					}
 				} else {
 					Log.e(TAG, "Received invalid ACTION_HEADSET_PLUG intent");
@@ -1111,6 +1140,28 @@ public class PlaybackService extends Service {
 			}
 		}
 	};
+
+	private BroadcastReceiver audioBecomingNoisy = new BroadcastReceiver() {
+
+		@Override
+		public void onReceive(Context context, Intent intent) {
+			// sound is about to change, eg. bluetooth -> speaker
+			if (AppConfig.DEBUG)
+				Log.d(TAG, "Pausing playback because audio is becoming noisy");
+			pauseIfPauseOnDisconnect();
+		}
+		// android.media.AUDIO_BECOMING_NOISY
+	};
+
+	/** Pauses playback if PREF_PAUSE_ON_HEADSET_DISCONNECT was set to true. */
+	private void pauseIfPauseOnDisconnect() {
+		boolean pauseOnDisconnect = PreferenceManager
+				.getDefaultSharedPreferences(getApplicationContext())
+				.getBoolean(PodcastApp.PREF_PAUSE_ON_HEADSET_DISCONNECT, false);
+		if (pauseOnDisconnect && status == PlayerStatus.PLAYING) {
+			pause(true, true);
+		}
+	}
 
 	private BroadcastReceiver shutdownReceiver = new BroadcastReceiver() {
 
