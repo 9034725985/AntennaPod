@@ -4,6 +4,8 @@
     <!-- Activitiy titles -->
     <string name="app_name">AntennaPod</string>
     <string name="feeds_label">Feeds</string>
+    <string name="podcasts_label">PODCASTS</string>
+    <string name="episodes_label">EPISODES</string>
     <string name="new_label">New</string>
     <string name="settings_label">Settings</string>
     <string name="add_new_feed_label">Add a new Feed</string>
@@ -11,6 +13,12 @@
     <string name="cancel_download_label">Cancel Download</string>
     <string name="download_log_label">Download log</string>
     <string name="playback_history_label">Playback history</string>
+
+    <!-- Webview actions -->
+    <string name="open_in_browser_label">Open in browser</string>
+    <string name="copy_url_label">Copy URL</string>
+    <string name="share_url_label">Share URL</string>
+    <string name="copied_url_msg">Copied URL to clipboard.</string>
 
     <!-- Playback history -->
     <string name="clear_history_label">Clear history</string>
@@ -22,7 +30,7 @@
     <string name="language_label">Language</string>
     <string name="cover_label">Cover</string>
     <string name="error_label">Error</string>
-    <string name="error_msg_prefix">An error occured:</string>
+    <string name="error_msg_prefix">An error occurred:</string>
     <string name="refresh_label">Refresh</string>
     <string name="external_storage_error_msg">No external storage is available. Please make sure that external storage is mounted so that the app can work properly.</string>
     <string name="chapters_label">Chapters</string>
@@ -51,6 +59,7 @@
     <!-- actions on feeditems -->
     <string name="download_label">Download</string>
     <string name="play_label">Play</string>
+    <string name="pause_label">Pause</string>
     <string name="stream_label">Stream</string>
     <string name="remove_label">Remove</string>
     <string name="mark_read_label">Mark as read</string>
@@ -109,9 +118,8 @@
     <string name="show_player_label">Show player</string>
 
     <!-- Queue operations -->
-    <string name="move_up_label">Move up</string>
-    <string name="move_down_label">Move down</string>
     <string name="clear_queue_label">Clear queue</string>
+    <string name="organize_queue_label">Organize queue</string>
 
     <!-- Flattr -->
     <string name="flattr_auth_label">Flattr sign-in</string>
@@ -185,7 +193,7 @@
     <string name="opml_import_label">OPML import</string>
     <string name="opml_directory_error">ERROR!</string>
     <string name="reading_opml_label">Reading OPML file</string>
-    <string name="opml_reader_error">An error has occured while reading the opml document:</string>
+    <string name="opml_reader_error">An error has occurred while reading the opml document:</string>
     <string name="opml_import_error_dir_empty">The import directory is empty.</string>
     <string name="select_all_label">Select all</string>
     <string name="deselect_all_label">Deselect all</string>
@@ -214,5 +222,18 @@
     <string name="best_rating_label">Best rating</string>
     <string name="add_feed_label">Add feed</string>
     <string name="miro_feed_added">Feed is being added</string>
+
+    <!-- Directory chooser -->
+    <string name="selected_folder_label">Selected folder:</string>
+    <string name="create_folder_label">Create folder</string>
+    <string name="choose_data_directory">Choose data folder</string>
+    <string name="create_folder_msg">Create new folder with name "%1$s"?</string>
+    <string name="create_folder_success">Created new folder</string>
+    <string name="create_folder_error_no_write_access">Cannot write to this folder</string>
+    <string name="create_folder_error_already_exists">Folder already exists</string>
+    <string name="create_folder_error">Could not create folder</string>
+    <string name="folder_not_empty_dialog_title">Folder is not empty</string>
+    <string name="folder_not_empty_dialog_msg">The folder you have selected is not empty. Media downloads and other files will be placed directly in this folder. Continue anyway?</string>
+    <string name="set_to_default_folder">Choose default folder</string>
 
 </resources>

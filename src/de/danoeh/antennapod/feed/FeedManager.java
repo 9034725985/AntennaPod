@@ -30,6 +30,7 @@ import de.danoeh.antennapod.util.FeedtitleComparator;
 import de.danoeh.antennapod.util.comparator.DownloadStatusComparator;
 import de.danoeh.antennapod.util.comparator.FeedItemPubdateComparator;
 import de.danoeh.antennapod.util.comparator.PlaybackCompletionDateComparator;
+import de.danoeh.antennapod.util.exception.MediaFileNotFoundException;
 
 /**
  * Singleton class Manages all feeds, categories and feeditems
@@ -53,7 +54,6 @@ public class FeedManager {
 	private static FeedManager singleton;
 
 	private List<Feed> feeds;
-	private ArrayList<FeedCategory> categories;
 
 	/** Contains all items where 'read' is false */
 	private List<FeedItem> unreadItems;
@@ -82,7 +82,6 @@ public class FeedManager {
 
 	private FeedManager() {
 		feeds = Collections.synchronizedList(new ArrayList<Feed>());
-		categories = new ArrayList<FeedCategory>();
 		unreadItems = Collections.synchronizedList(new ArrayList<FeedItem>());
 		requester = DownloadRequester.getInstance();
 		downloadLog = new ArrayList<DownloadStatus>();
@@ -123,21 +122,43 @@ public class FeedManager {
 	 */
 	public void playMedia(Context context, FeedMedia media, boolean showPlayer,
 			boolean startWhenPrepared, boolean shouldStream) {
-		// Start playback Service
-		Intent launchIntent = new Intent(context, PlaybackService.class);
-		launchIntent.putExtra(PlaybackService.EXTRA_MEDIA_ID, media.getId());
-		launchIntent.putExtra(PlaybackService.EXTRA_FEED_ID, media.getItem()
-				.getFeed().getId());
-		launchIntent.putExtra(PlaybackService.EXTRA_START_WHEN_PREPARED,
-				startWhenPrepared);
-		launchIntent
-				.putExtra(PlaybackService.EXTRA_SHOULD_STREAM, shouldStream);
-		launchIntent.putExtra(PlaybackService.EXTRA_PREPARE_IMMEDIATELY, true);
-		context.startService(launchIntent);
-		if (showPlayer) {
-			// Launch Mediaplayer
-			context.startActivity(PlaybackService.getPlayerActivityIntent(
-					context, media));
+		try {
+			if (!shouldStream) {
+				if (media.fileExists() == false) {
+					throw new MediaFileNotFoundException(
+							"No episode was found at " + media.getFile_url(),
+							media);
+				}
+			}
+			// Start playback Service
+			Intent launchIntent = new Intent(context, PlaybackService.class);
+			launchIntent
+					.putExtra(PlaybackService.EXTRA_MEDIA_ID, media.getId());
+			launchIntent.putExtra(PlaybackService.EXTRA_FEED_ID, media
+					.getItem().getFeed().getId());
+			launchIntent.putExtra(PlaybackService.EXTRA_START_WHEN_PREPARED,
+					startWhenPrepared);
+			launchIntent.putExtra(PlaybackService.EXTRA_SHOULD_STREAM,
+					shouldStream);
+			launchIntent.putExtra(PlaybackService.EXTRA_PREPARE_IMMEDIATELY,
+					true);
+			context.startService(launchIntent);
+			if (showPlayer) {
+				// Launch Mediaplayer
+				context.startActivity(PlaybackService.getPlayerActivityIntent(
+						context, media));
+			}
+		} catch (MediaFileNotFoundException e) {
+			e.printStackTrace();
+			SharedPreferences prefs = PreferenceManager
+					.getDefaultSharedPreferences(context);
+			final long lastPlayedId = prefs.getLong(
+					PlaybackService.PREF_LAST_PLAYED_ID, -1);
+			if (lastPlayedId == media.getId()) {
+				context.sendBroadcast(new Intent(
+						PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE));
+			}
+			notifyMissingFeedMediaFile(context, media);
 		}
 	}
 
@@ -505,6 +526,19 @@ public class FeedManager {
 		}
 	}
 
+	/**
+	 * Notifies the feed manager that a downloaded episode doesn't exist
+	 * anymore. It will update the values of the FeedMedia object accordingly.
+	 */
+	public void notifyMissingFeedMediaFile(Context context, FeedMedia media) {
+		Log.i(TAG,
+				"The feedmanager was notified about a missing episode. It will update its database now.");
+		media.setDownloaded(false);
+		media.setFile_url(null);
+		setFeedMedia(context, media);
+		sendFeedUpdateBroadcast(context);
+	}
+
 	public void refreshFeed(Context context, Feed feed)
 			throws DownloadRequestException {
 		requester.downloadFeed(context, new Feed(feed.getDownload_url(),
@@ -731,16 +765,29 @@ public class FeedManager {
 		}
 	}
 
-	public void moveQueueItem(final Context context, FeedItem item, int delta) {
+	/**
+	 * Moves the queue item at the specified index to another position. If the
+	 * indices are out of range, no operation will be performed.
+	 * 
+	 * @param from
+	 *            index of the item that is going to be moved
+	 * @param to
+	 *            destination index of item
+	 * @param broadcastUpdate
+	 *            true if the method should send a queue update broadcast after
+	 *            the operation has been performed. This should be set to false
+	 *            if the order of the queue is changed through drag & drop
+	 *            reordering to avoid visual glitches.
+	 */
+	public void moveQueueItem(final Context context, int from, int to,
+			boolean broadcastUpdate) {
 		if (AppConfig.DEBUG)
-			Log.d(TAG, "Moving queue item");
-		int itemIndex = queue.indexOf(item);
-		int newIndex = itemIndex + delta;
-		if (newIndex >= 0 && newIndex < queue.size()) {
-			FeedItem oldItem = queue.set(newIndex, item);
-			queue.set(itemIndex, oldItem);
+			Log.d(TAG, "Moving queue item from index " + from + " to index "
+					+ to);
+		if (from >= 0 && from < queue.size() && to >= 0 && to < queue.size()) {
+			FeedItem item = queue.remove(from);
+			queue.add(to, item);
 			dbExec.execute(new Runnable() {
-
 				@Override
 				public void run() {
 					PodDBAdapter adapter = new PodDBAdapter(context);
@@ -749,9 +796,10 @@ public class FeedManager {
 					adapter.close();
 				}
 			});
-
+			if (broadcastUpdate) {
+				sendQueueUpdateBroadcast(context, item);
+			}
 		}
-		sendQueueUpdateBroadcast(context, item);
 	}
 
 	public boolean isInQueue(FeedItem item) {
@@ -776,18 +824,7 @@ public class FeedManager {
 				sendFeedUpdateBroadcast(context);
 			}
 		});
-		dbExec.execute(new Runnable() {
-
-			@Override
-			public void run() {
-				PodDBAdapter adapter = new PodDBAdapter(context);
-				adapter.open();
-				adapter.setCompleteFeed(feed);
-				feed.cacheDescriptionsOfItems();
-				adapter.close();
-			}
-		});
-
+		setCompleteFeed(context, feed);
 	}
 
 	/**
@@ -811,6 +848,12 @@ public class FeedManager {
 			if (AppConfig.DEBUG)
 				Log.d(TAG, "Feed with title " + newFeed.getTitle()
 						+ " already exists. Syncing new with existing one.");
+			if (savedFeed.compareWithOther(newFeed)) {
+				if (AppConfig.DEBUG)
+					Log.d(TAG,
+							"Feed has updated attribute values. Updating old feed's attributes");
+				savedFeed.updateFromOther(newFeed);
+			}
 			// Look for new or updated Items
 			for (int idx = 0; idx < newFeed.getItems().size(); idx++) {
 				final FeedItem item = newFeed.getItems().get(idx);
@@ -828,12 +871,14 @@ public class FeedManager {
 						}
 					});
 					markItemRead(context, item, false, false);
+				} else {
+					oldItem.updateFromOther(item);
 				}
 			}
 			// update attributes
 			savedFeed.setLastUpdate(newFeed.getLastUpdate());
 			savedFeed.setType(newFeed.getType());
-			setFeed(context, savedFeed);
+			setCompleteFeed(context, savedFeed);
 			return savedFeed;
 		}
 
@@ -925,6 +970,25 @@ public class FeedManager {
 				PodDBAdapter adapter = new PodDBAdapter(context);
 				adapter.open();
 				adapter.setFeed(feed);
+				feed.cacheDescriptionsOfItems();
+				adapter.close();
+			}
+		});
+
+	}
+
+	/**
+	 * Updates Information of an existing Feed and its FeedItems. Creates and
+	 * opens its own adapter.
+	 */
+	public void setCompleteFeed(final Context context, final Feed feed) {
+		dbExec.execute(new Runnable() {
+
+			@Override
+			public void run() {
+				PodDBAdapter adapter = new PodDBAdapter(context);
+				adapter.open();
+				adapter.setCompleteFeed(feed);
 				feed.cacheDescriptionsOfItems();
 				adapter.close();
 			}
@@ -1078,7 +1142,6 @@ public class FeedManager {
 
 	public void updateArrays(Context context) {
 		feeds.clear();
-		categories.clear();
 		PodDBAdapter adapter = new PodDBAdapter(context);
 		adapter.open();
 		extractFeedlistFromCursor(context, adapter);
@@ -1348,9 +1411,9 @@ public class FeedManager {
 	}
 
 	/**
-	 * Loads description and contentEncoded values from the database and caches it in the feeditem. The task
-	 * callback will contain a String-array with the description at index 0 and
-	 * the value of contentEncoded at index 1.
+	 * Loads description and contentEncoded values from the database and caches
+	 * it in the feeditem. The task callback will contain a String-array with
+	 * the description at index 0 and the value of contentEncoded at index 1.
 	 */
 	public void loadExtraInformationOfItem(final Context context,
 			final FeedItem item, FeedManager.TaskCallback<String[]> callback) {
@@ -1375,7 +1438,7 @@ public class FeedManager {
 							.getString(PodDBAdapter.IDX_FI_EXTRA_CONTENT_ENCODED);
 					item.setCachedDescription(description);
 					item.setCachedContentEncoded(contentEncoded);
-					setResult(new String[] {description, contentEncoded});
+					setResult(new String[] { description, contentEncoded });
 				}
 				adapter.close();
 			}

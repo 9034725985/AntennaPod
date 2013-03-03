@@ -1,16 +1,20 @@
 package de.danoeh.antennapod.activity;
 
+import java.io.File;
+
 import android.content.Intent;
 import android.content.res.Resources.Theme;
 import android.os.Bundle;
 import android.preference.Preference;
 import android.preference.Preference.OnPreferenceChangeListener;
 import android.preference.Preference.OnPreferenceClickListener;
+import android.util.Log;
 
 import com.actionbarsherlock.app.SherlockPreferenceActivity;
 import com.actionbarsherlock.view.Menu;
 import com.actionbarsherlock.view.MenuItem;
 
+import de.danoeh.antennapod.AppConfig;
 import de.danoeh.antennapod.PodcastApp;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.asynctask.FlattrClickWorker;
@@ -27,13 +31,14 @@ public class PreferenceActivity extends SherlockPreferenceActivity {
 	private static final String PREF_FLATTR_REVOKE = "prefRevokeAccess";
 	private static final String PREF_OPML_EXPORT = "prefOpmlExport";
 	private static final String PREF_ABOUT = "prefAbout";
+	private static final String PREF_CHOOSE_DATA_DIR = "prefChooseDataDir";
 
 	@SuppressWarnings("deprecation")
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		setTheme(PodcastApp.getThemeResourceId());
 		super.onCreate(savedInstanceState);
-		
+
 		getSupportActionBar().setDisplayHomeAsUpEnabled(true);
 		addPreferencesFromResource(R.xml.preferences);
 		findPreference(PREF_FLATTR_THIS_APP).setOnPreferenceClickListener(
@@ -84,17 +89,33 @@ public class PreferenceActivity extends SherlockPreferenceActivity {
 						return true;
 					}
 				});
-		findPreference(PodcastApp.PREF_THEME).setOnPreferenceChangeListener(new OnPreferenceChangeListener() {
-			
-			@Override
-			public boolean onPreferenceChange(Preference preference, Object newValue) {
-				Intent i = getIntent();
-				i.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
-				finish();
-				startActivity(i);
-				return true;
-			}
-		});
+
+		findPreference(PREF_CHOOSE_DATA_DIR).setOnPreferenceClickListener(
+				new OnPreferenceClickListener() {
+
+					@Override
+					public boolean onPreferenceClick(Preference preference) {
+						startActivityForResult(
+								new Intent(PreferenceActivity.this,
+										DirectoryChooserActivity.class),
+								DirectoryChooserActivity.RESULT_CODE_DIR_SELECTED);
+						return true;
+					}
+				});
+		findPreference(PodcastApp.PREF_THEME).setOnPreferenceChangeListener(
+				new OnPreferenceChangeListener() {
+
+					@Override
+					public boolean onPreferenceChange(Preference preference,
+							Object newValue) {
+						Intent i = getIntent();
+						i.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK
+								| Intent.FLAG_ACTIVITY_NEW_TASK);
+						finish();
+						startActivity(i);
+						return true;
+					}
+				});
 
 	}
 
@@ -102,6 +123,7 @@ public class PreferenceActivity extends SherlockPreferenceActivity {
 	protected void onResume() {
 		super.onResume();
 		checkItemVisibility();
+		setDataFolderText();
 	}
 
 	@SuppressWarnings("deprecation")
@@ -112,6 +134,14 @@ public class PreferenceActivity extends SherlockPreferenceActivity {
 		findPreference(PREF_FLATTR_AUTH).setEnabled(!hasFlattrToken);
 		findPreference(PREF_FLATTR_REVOKE).setEnabled(hasFlattrToken);
 
+	}
+
+	private void setDataFolderText() {
+		File f = PodcastApp.getDataFolder(this, null);
+		if (f != null) {
+			findPreference(PREF_CHOOSE_DATA_DIR)
+					.setSummary(f.getAbsolutePath());
+		}
 	}
 
 	@Override
@@ -137,7 +167,17 @@ public class PreferenceActivity extends SherlockPreferenceActivity {
 	protected void onApplyThemeResource(Theme theme, int resid, boolean first) {
 		theme.applyStyle(PodcastApp.getThemeResourceId(), true);
 	}
-	
-	
+
+	@Override
+	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+		super.onActivityResult(requestCode, resultCode, data);
+		if (resultCode == DirectoryChooserActivity.RESULT_CODE_DIR_SELECTED) {
+			String dir = data
+					.getStringExtra(DirectoryChooserActivity.RESULT_SELECTED_DIR);
+			if (AppConfig.DEBUG)
+				Log.d(TAG, "Setting data folder");
+			PodcastApp.getInstance().setDataFolder(dir);
+		}
+	}
 
 }

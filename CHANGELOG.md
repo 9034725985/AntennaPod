@@ -1,6 +1,34 @@
 Change Log
 ==========
 
+Version 0.9.7
+-------------
+* Improved user interface
+* OPML files can now be imported by selecting them in a file browser
+* The queue can now be organized via drag & drop
+* Added expandable notifications (only supported on Android 4.1 and above)
+* Added Danish, French, Romanian (Romania) and Ukrainian (Ukraine) translation (thanks to all translators!)
+* Several bugfixes and minor improvements
+
+Version 0.9.6.4
+---------------
+* Added Chinese translation (Thanks tupunco!)
+* Added Portuguese (Brazil) translation (Thanks mbaltar!)
+* Several bugfixes
+
+Version 0.9.6.3
+---------------
+* Added the ability change the location of AntennaPod's data folder
+* Added Spanish translation (Thanks frandavid100!)
+* Solved problems with several feeds
+
+Version 0.9.6.2
+---------------
+* Fixed import problems with some OPML files
+* Fixed download problems
+* AntennaPod now recognizes changes of episode information
+* Other improvements and bugfixes
+
 Version 0.9.6.1
 ---------------
 * Added dark theme

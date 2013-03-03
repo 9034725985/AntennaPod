@@ -6,9 +6,9 @@ import de.danoeh.antennapod.feed.FeedImage;
 import de.danoeh.antennapod.feed.FeedItem;
 import de.danoeh.antennapod.feed.FeedMedia;
 import de.danoeh.antennapod.syndication.handler.HandlerState;
+import de.danoeh.antennapod.syndication.namespace.NSRSS20;
 import de.danoeh.antennapod.syndication.namespace.Namespace;
 import de.danoeh.antennapod.syndication.namespace.SyndElement;
-import de.danoeh.antennapod.syndication.namespace.rss20.NSRSS20;
 import de.danoeh.antennapod.syndication.util.SyndDateUtils;
 import de.danoeh.antennapod.syndication.util.SyndTypeUtils;
 
@@ -73,7 +73,7 @@ public class NSAtom extends Namespace {
 					if (strSize != null)
 						size = Long.parseLong(strSize);
 					String type = attributes.getValue(LINK_TYPE);
-					if (SyndTypeUtils.typeValid(type)
+					if (SyndTypeUtils.enclosureTypeValid(type)
 							|| (type = SyndTypeUtils
 									.getValidMimeTypeFromUrl(href)) != null) {
 						state.getCurrentItem().setMedia(
