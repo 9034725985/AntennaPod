@@ -1,4 +1,4 @@
-package de.danoeh.antennapod.util;
+package de.danoeh.antennapod.util.playback;
 
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledFuture;
@@ -30,8 +30,11 @@ import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.feed.Chapter;
 import de.danoeh.antennapod.feed.FeedManager;
 import de.danoeh.antennapod.feed.FeedMedia;
+import de.danoeh.antennapod.preferences.PlaybackPreferences;
 import de.danoeh.antennapod.service.PlaybackService;
 import de.danoeh.antennapod.service.PlayerStatus;
+import de.danoeh.antennapod.util.Converter;
+import de.danoeh.antennapod.util.playback.Playable.PlayableUtils;
 
 /**
  * Communicates with the playback service. GUI classes should use this class to
@@ -46,7 +49,7 @@ public abstract class PlaybackController {
 	private Activity activity;
 
 	private PlaybackService playbackService;
-	private FeedMedia media;
+	private Playable media;
 	private PlayerStatus status;
 
 	private ScheduledThreadPoolExecutor schedExecutor;
@@ -185,26 +188,22 @@ public abstract class PlaybackController {
 			Log.d(TAG, "Trying to restore last played media");
 		SharedPreferences prefs = PreferenceManager
 				.getDefaultSharedPreferences(activity.getApplicationContext());
-		long mediaId = prefs.getLong(PlaybackService.PREF_LAST_PLAYED_ID, -1);
-		long feedId = prefs.getLong(PlaybackService.PREF_LAST_PLAYED_FEED_ID,
-				-1);
-		if (mediaId != -1 && feedId != -1) {
-			FeedMedia media = FeedManager.getInstance().getFeedMedia(mediaId);
+		long currentlyPlayingMedia = PlaybackPreferences.getCurrentlyPlayingMedia();
+		if (currentlyPlayingMedia != PlaybackPreferences.NO_MEDIA_PLAYING) {
+			Playable media = PlayableUtils.createInstanceFromPreferences((int) currentlyPlayingMedia, prefs);
 			if (media != null) {
 				Intent serviceIntent = new Intent(activity,
 						PlaybackService.class);
-				serviceIntent.putExtra(PlaybackService.EXTRA_FEED_ID, feedId);
-				serviceIntent.putExtra(PlaybackService.EXTRA_MEDIA_ID, mediaId);
+				serviceIntent.putExtra(PlaybackService.EXTRA_PLAYABLE, media);
 				serviceIntent.putExtra(
 						PlaybackService.EXTRA_START_WHEN_PREPARED, false);
 				serviceIntent.putExtra(
 						PlaybackService.EXTRA_PREPARE_IMMEDIATELY, false);
-				boolean fileExists = media.fileExists();
-				boolean lastIsStream = prefs.getBoolean(
-						PlaybackService.PREF_LAST_IS_STREAM, true);
-				if (!fileExists && !lastIsStream) {
+				boolean fileExists = media.localFileAvailable();
+				boolean lastIsStream = PlaybackPreferences.getCurrentEpisodeIsStream();
+				if (!fileExists && !lastIsStream && media instanceof FeedMedia) {
 					FeedManager.getInstance().notifyMissingFeedMediaFile(
-							activity, media);
+							activity, (FeedMedia) media);
 				}
 				serviceIntent.putExtra(PlaybackService.EXTRA_SHOULD_STREAM,
 						lastIsStream || !fileExists);
@@ -321,6 +320,9 @@ public abstract class PlaybackController {
 				case PlaybackService.NOTIFICATION_TYPE_BUFFER_END:
 					onBufferEnd();
 					break;
+				case PlaybackService.NOTIFICATION_TYPE_PLAYBACK_END:
+					onPlaybackEnd();
+					break;
 				}
 
 			} else {
@@ -358,6 +360,8 @@ public abstract class PlaybackController {
 	public abstract void onSleepTimerUpdate();
 
 	public abstract void handleError(int code);
+	
+	public abstract void onPlaybackEnd();
 
 	/**
 	 * Is called whenever the PlaybackService changes it's status. This method
@@ -586,7 +590,7 @@ public abstract class PlaybackController {
 		}
 	}
 
-	public FeedMedia getMedia() {
+	public Playable getMedia() {
 		return media;
 	}
 
