@@ -19,34 +19,32 @@ import android.os.Handler;
 import android.preference.PreferenceManager;
 import android.util.Log;
 import de.danoeh.antennapod.AppConfig;
-import de.danoeh.antennapod.PodcastApp;
 import de.danoeh.antennapod.asynctask.DownloadStatus;
+import de.danoeh.antennapod.preferences.PlaybackPreferences;
+import de.danoeh.antennapod.preferences.UserPreferences;
 import de.danoeh.antennapod.service.PlaybackService;
 import de.danoeh.antennapod.storage.DownloadRequestException;
 import de.danoeh.antennapod.storage.DownloadRequester;
 import de.danoeh.antennapod.storage.PodDBAdapter;
 import de.danoeh.antennapod.util.DownloadError;
+import de.danoeh.antennapod.util.EpisodeFilter;
 import de.danoeh.antennapod.util.FeedtitleComparator;
+import de.danoeh.antennapod.util.NetworkUtils;
 import de.danoeh.antennapod.util.comparator.DownloadStatusComparator;
 import de.danoeh.antennapod.util.comparator.FeedItemPubdateComparator;
 import de.danoeh.antennapod.util.comparator.PlaybackCompletionDateComparator;
 import de.danoeh.antennapod.util.exception.MediaFileNotFoundException;
 
 /**
- * Singleton class Manages all feeds, categories and feeditems
+ * Singleton class that - provides access to all Feeds and FeedItems and to
+ * several lists of FeedItems. - provides methods for modifying the
+ * application's data - takes care of updating the information stored in the
+ * database when something is modified
  * 
- * 
+ * An instance of this class can be retrieved via getInstance().
  * */
 public class FeedManager {
 	private static final String TAG = "FeedManager";
-
-	public static final String ACTION_FEED_LIST_UPDATE = "de.danoeh.antennapod.action.feed.feedlistUpdate";
-	public static final String ACTION_UNREAD_ITEMS_UPDATE = "de.danoeh.antennapod.action.feed.unreadItemsUpdate";
-	public static final String ACTION_QUEUE_UPDATE = "de.danoeh.antennapod.action.feed.queueUpdate";
-	public static final String ACTION_DOWNLOADLOG_UPDATE = "de.danoeh.antennapod.action.feed.downloadLogUpdate";
-	public static final String ACTION_PLAYBACK_HISTORY_UPDATE = "de.danoeh.antennapod.action.feed.playbackHistoryUpdate";
-	public static final String EXTRA_FEED_ITEM_ID = "de.danoeh.antennapod.extra.feed.feedItemId";
-	public static final String EXTRA_FEED_ID = "de.danoeh.antennapod.extra.feed.feedId";
 
 	/** Number of completed Download status entries to store. */
 	private static final int DOWNLOAD_LOG_SIZE = 50;
@@ -59,7 +57,7 @@ public class FeedManager {
 	private List<FeedItem> unreadItems;
 
 	/** Contains completed Download status entries */
-	private ArrayList<DownloadStatus> downloadLog;
+	private List<DownloadStatus> downloadLog;
 
 	/** Contains the queue of items to be played. */
 	private List<FeedItem> queue;
@@ -70,10 +68,15 @@ public class FeedManager {
 	/** Maximum number of items in the playback history. */
 	private static final int PLAYBACK_HISTORY_SIZE = 15;
 
-	private DownloadRequester requester;
+	private DownloadRequester requester = DownloadRequester.getInstance();
+	private EventDistributor eventDist = EventDistributor.getInstance();
 
-	/** Should be used to change the content of the arrays from another thread. */
+	/**
+	 * Should be used to change the content of the arrays from another thread to
+	 * ensure that arrays are only modified on the main thread.
+	 */
 	private Handler contentChanger;
+
 	/** Ensures that there are no parallel db operations. */
 	private Executor dbExec;
 
@@ -83,7 +86,6 @@ public class FeedManager {
 	private FeedManager() {
 		feeds = Collections.synchronizedList(new ArrayList<Feed>());
 		unreadItems = Collections.synchronizedList(new ArrayList<FeedItem>());
-		requester = DownloadRequester.getInstance();
 		downloadLog = new ArrayList<DownloadStatus>();
 		queue = Collections.synchronizedList(new ArrayList<FeedItem>());
 		playbackHistory = Collections
@@ -100,6 +102,7 @@ public class FeedManager {
 		});
 	}
 
+	/** Creates a new instance of this class if necessary and returns it. */
 	public static FeedManager getInstance() {
 		if (singleton == null) {
 			singleton = new FeedManager();
@@ -109,7 +112,8 @@ public class FeedManager {
 
 	/**
 	 * Play FeedMedia and start the playback service + launch Mediaplayer
-	 * Activity.
+	 * Activity. The FeedItem belonging to the media is moved to the top of the
+	 * queue.
 	 * 
 	 * @param context
 	 *            for starting the playbackservice
@@ -119,6 +123,8 @@ public class FeedManager {
 	 *            if Mediaplayer activity shall be started
 	 * @param startWhenPrepared
 	 *            if Mediaplayer shall be started after it has been prepared
+	 * @param shouldStream
+	 *            if Mediaplayer should stream the file
 	 */
 	public void playMedia(Context context, FeedMedia media, boolean showPlayer,
 			boolean startWhenPrepared, boolean shouldStream) {
@@ -132,10 +138,7 @@ public class FeedManager {
 			}
 			// Start playback Service
 			Intent launchIntent = new Intent(context, PlaybackService.class);
-			launchIntent
-					.putExtra(PlaybackService.EXTRA_MEDIA_ID, media.getId());
-			launchIntent.putExtra(PlaybackService.EXTRA_FEED_ID, media
-					.getItem().getFeed().getId());
+			launchIntent.putExtra(PlaybackService.EXTRA_PLAYABLE, media);
 			launchIntent.putExtra(PlaybackService.EXTRA_START_WHEN_PREPARED,
 					startWhenPrepared);
 			launchIntent.putExtra(PlaybackService.EXTRA_SHOULD_STREAM,
@@ -148,13 +151,14 @@ public class FeedManager {
 				context.startActivity(PlaybackService.getPlayerActivityIntent(
 						context, media));
 			}
+			if (queue.contains(media.getItem())) {
+				moveQueueItem(context, queue.indexOf(media.getItem()), 0, true);
+			} else {
+				addQueueItemAt(context, media.getItem(), 0);
+			}
 		} catch (MediaFileNotFoundException e) {
 			e.printStackTrace();
-			SharedPreferences prefs = PreferenceManager
-					.getDefaultSharedPreferences(context);
-			final long lastPlayedId = prefs.getLong(
-					PlaybackService.PREF_LAST_PLAYED_ID, -1);
-			if (lastPlayedId == media.getId()) {
+			if (media.isPlaying()) {
 				context.sendBroadcast(new Intent(
 						PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE));
 			}
@@ -176,16 +180,20 @@ public class FeedManager {
 
 			SharedPreferences prefs = PreferenceManager
 					.getDefaultSharedPreferences(context);
-			final long lastPlayedId = prefs.getLong(
-					PlaybackService.PREF_LAST_PLAYED_ID, -1);
-			if (media.getId() == lastPlayedId) {
-				SharedPreferences.Editor editor = prefs.edit();
-				editor.putBoolean(PlaybackService.PREF_LAST_IS_STREAM, true);
-				editor.commit();
-			}
-			if (lastPlayedId == media.getId()) {
-				context.sendBroadcast(new Intent(
-						PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE));
+			if (PlaybackPreferences.getCurrentlyPlayingMedia() == FeedMedia.PLAYABLE_TYPE_FEEDMEDIA) {
+				if (media.getId() == PlaybackPreferences
+						.getCurrentlyPlayingFeedMediaId()) {
+					SharedPreferences.Editor editor = prefs.edit();
+					editor.putBoolean(
+							PlaybackPreferences.PREF_CURRENT_EPISODE_IS_STREAM,
+							true);
+					editor.commit();
+				}
+				if (PlaybackPreferences.getCurrentlyPlayingFeedMediaId() == media
+						.getId()) {
+					context.sendBroadcast(new Intent(
+							PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE));
+				}
 			}
 		}
 		if (AppConfig.DEBUG)
@@ -197,14 +205,13 @@ public class FeedManager {
 	public void deleteFeed(final Context context, final Feed feed) {
 		SharedPreferences prefs = PreferenceManager
 				.getDefaultSharedPreferences(context.getApplicationContext());
-		long lastPlayedFeed = prefs.getLong(
-				PlaybackService.PREF_LAST_PLAYED_FEED_ID, -1);
-		if (lastPlayedFeed == feed.getId()) {
+		if (PlaybackPreferences.getCurrentlyPlayingMedia() == FeedMedia.PLAYABLE_TYPE_FEEDMEDIA
+				&& PlaybackPreferences.getLastPlayedFeedId() == feed.getId()) {
 			context.sendBroadcast(new Intent(
 					PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE));
 			SharedPreferences.Editor editor = prefs.edit();
-			editor.putLong(PlaybackService.PREF_LAST_PLAYED_ID, -1);
-			editor.putLong(PlaybackService.PREF_LAST_PLAYED_FEED_ID, -1);
+			editor.putLong(PlaybackPreferences.PREF_CURRENTLY_PLAYING_FEED_ID,
+					-1);
 			editor.commit();
 		}
 
@@ -213,7 +220,7 @@ public class FeedManager {
 			@Override
 			public void run() {
 				feeds.remove(feed);
-				sendFeedUpdateBroadcast(context);
+				eventDist.sendFeedUpdateBroadcast();
 				dbExec.execute(new Runnable() {
 
 					@Override
@@ -264,32 +271,6 @@ public class FeedManager {
 			}
 		});
 
-	}
-
-	private void sendUnreadItemsUpdateBroadcast(Context context, FeedItem item) {
-		Intent update = new Intent(ACTION_UNREAD_ITEMS_UPDATE);
-		if (item != null) {
-			update.putExtra(EXTRA_FEED_ID, item.getFeed().getId());
-			update.putExtra(EXTRA_FEED_ITEM_ID, item.getId());
-		}
-		context.sendBroadcast(update);
-	}
-
-	private void sendQueueUpdateBroadcast(Context context, FeedItem item) {
-		Intent update = new Intent(ACTION_QUEUE_UPDATE);
-		if (item != null) {
-			update.putExtra(EXTRA_FEED_ID, item.getFeed().getId());
-			update.putExtra(EXTRA_FEED_ITEM_ID, item.getId());
-		}
-		context.sendBroadcast(update);
-	}
-
-	private void sendFeedUpdateBroadcast(Context context) {
-		context.sendBroadcast(new Intent(ACTION_FEED_LIST_UPDATE));
-	}
-
-	private void sendPlaybackHistoryUpdateBroadcast(Context context) {
-		context.sendBroadcast(new Intent(ACTION_PLAYBACK_HISTORY_UPDATE));
 	}
 
 	/**
@@ -346,6 +327,7 @@ public class FeedManager {
 		}
 	}
 
+	/** Removes all items from the playback history. */
 	public void clearPlaybackHistory(final Context context) {
 		if (!playbackHistory.isEmpty()) {
 			if (AppConfig.DEBUG)
@@ -353,7 +335,7 @@ public class FeedManager {
 			final FeedItem[] items = playbackHistory
 					.toArray(new FeedItem[playbackHistory.size()]);
 			playbackHistory.clear();
-			sendPlaybackHistoryUpdateBroadcast(context);
+			eventDist.sendPlaybackHistoryUpdateBroadcast();
 			dbExec.execute(new Runnable() {
 
 				@Override
@@ -373,6 +355,7 @@ public class FeedManager {
 		}
 	}
 
+	/** Adds a FeedItem to the playback history. */
 	public void addItemToPlaybackHistory(Context context, FeedItem item) {
 		if (item.getMedia() != null
 				&& item.getMedia().getPlaybackCompletionDate() != null) {
@@ -382,13 +365,13 @@ public class FeedManager {
 				playbackHistory.add(item);
 			}
 			cleanupPlaybackHistoryWithDBCleanup(context);
-			sendPlaybackHistoryUpdateBroadcast(context);
+			eventDist.sendPlaybackHistoryUpdateBroadcast();
 		}
 	}
 
 	private void removeItemFromPlaybackHistory(Context context, FeedItem item) {
 		playbackHistory.remove(item);
-		sendPlaybackHistoryUpdateBroadcast(context);
+		eventDist.sendPlaybackHistoryUpdateBroadcast();
 	}
 
 	/**
@@ -420,7 +403,7 @@ public class FeedManager {
 					Collections.sort(unreadItems,
 							new FeedItemPubdateComparator());
 				}
-				sendUnreadItemsUpdateBroadcast(context, item);
+				eventDist.sendUnreadItemsUpdateBroadcast();
 			}
 		});
 
@@ -428,8 +411,6 @@ public class FeedManager {
 
 	/**
 	 * Sets the 'read' attribute of all FeedItems of a specific feed to true
-	 * 
-	 * @param context
 	 */
 	public void markFeedRead(Context context, Feed feed) {
 		for (FeedItem item : feed.getItems()) {
@@ -449,7 +430,7 @@ public class FeedManager {
 		final ArrayList<FeedItem> unreadItemsCopy = new ArrayList<FeedItem>(
 				unreadItems);
 		unreadItems.clear();
-		sendUnreadItemsUpdateBroadcast(context, null);
+		eventDist.sendUnreadItemsUpdateBroadcast();
 		dbExec.execute(new Runnable() {
 
 			@Override
@@ -467,6 +448,7 @@ public class FeedManager {
 
 	}
 
+	/** Updates all feeds in the feed list. */
 	@SuppressLint("NewApi")
 	public void refreshAllFeeds(final Context context) {
 		if (AppConfig.DEBUG)
@@ -536,15 +518,17 @@ public class FeedManager {
 		media.setDownloaded(false);
 		media.setFile_url(null);
 		setFeedMedia(context, media);
-		sendFeedUpdateBroadcast(context);
+		eventDist.sendFeedUpdateBroadcast();
 	}
 
+	/** Updates a specific feed. */
 	public void refreshFeed(Context context, Feed feed)
 			throws DownloadRequestException {
 		requester.downloadFeed(context, new Feed(feed.getDownload_url(),
 				new Date(), feed.getTitle()));
 	}
 
+	/** Adds a download status object to the download log. */
 	public void addDownloadStatus(final Context context,
 			final DownloadStatus status) {
 		contentChanger.post(new Runnable() {
@@ -559,7 +543,7 @@ public class FeedManager {
 				} else {
 					removedStatus = null;
 				}
-				context.sendBroadcast(new Intent(ACTION_DOWNLOADLOG_UPDATE));
+				eventDist.sendDownloadLogUpdateBroadcast();
 				dbExec.execute(new Runnable() {
 
 					@Override
@@ -578,6 +562,7 @@ public class FeedManager {
 
 	}
 
+	/** Downloads all items in the queue that have not been downloaded yet. */
 	public void downloadAllItemsInQueue(final Context context) {
 		if (!queue.isEmpty()) {
 			try {
@@ -591,11 +576,24 @@ public class FeedManager {
 
 	public void downloadFeedItem(final Context context, FeedItem... items)
 			throws DownloadRequestException {
-		boolean autoQueue = PreferenceManager.getDefaultSharedPreferences(
-				context.getApplicationContext()).getBoolean(
-				PodcastApp.PREF_AUTO_QUEUE, true);
-		List<FeedItem> addToQueue = new ArrayList<FeedItem>();
+		downloadFeedItem(true, context, items);
+	}
 
+	/** Downloads FeedItems if they have not been downloaded yet. */
+	private void downloadFeedItem(boolean performAutoCleanup,
+			final Context context, final FeedItem... items)
+			throws DownloadRequestException {
+		if (performAutoCleanup) {
+			new Thread() {
+
+				@Override
+				public void run() {
+					performAutoCleanup(context,
+							getPerformAutoCleanupArgs(items.length));
+				}
+
+			}.start();
+		}
 		for (FeedItem item : items) {
 			if (item.getMedia() != null
 					&& !requester.isDownloadingFile(item.getMedia())
@@ -615,15 +613,176 @@ public class FeedManager {
 				} else {
 					requester.downloadMedia(context, item.getMedia());
 				}
-				addToQueue.add(item);
 			}
-		}
-		if (autoQueue) {
-			addQueueItem(context,
-					addToQueue.toArray(new FeedItem[addToQueue.size()]));
 		}
 	}
 
+	/**
+	 * This method will try to download undownloaded items in the queue or the
+	 * unread items list. If not enough space is available, an episode cleanup
+	 * will be performed first.
+	 * 
+	 * This method assumes that the item that is currently being played is at
+	 * index 0 in the queue and therefore will not try to download it.
+	 */
+	public void autodownloadUndownloadedItems(Context context) {
+		if (AppConfig.DEBUG)
+			Log.d(TAG, "Performing auto-dl of undownloaded episodes");
+		if (NetworkUtils.autodownloadNetworkAvailable(context)) {
+			int undownloadedEpisodes = getNumberOfUndownloadedEpisodes();
+			int downloadedEpisodes = getNumberOfDownloadedEpisodes();
+			int deletedEpisodes = performAutoCleanup(context,
+					getPerformAutoCleanupArgs(undownloadedEpisodes));
+			int episodeSpaceLeft = undownloadedEpisodes;
+			if (UserPreferences.getEpisodeCacheSize() < downloadedEpisodes
+					+ undownloadedEpisodes) {
+				episodeSpaceLeft = UserPreferences.getEpisodeCacheSize()
+						- (downloadedEpisodes - deletedEpisodes);
+			}
+
+			List<FeedItem> itemsToDownload = new ArrayList<FeedItem>();
+			if (episodeSpaceLeft > 0 && undownloadedEpisodes > 0) {
+				for (int i = 1; i < queue.size(); i++) { // ignore first item in
+															// queue
+					FeedItem item = queue.get(i);
+					if (item.hasMedia() && !item.getMedia().isDownloaded()) {
+						itemsToDownload.add(item);
+						episodeSpaceLeft--;
+						undownloadedEpisodes--;
+						if (episodeSpaceLeft == 0 || undownloadedEpisodes == 0) {
+							break;
+						}
+					}
+				}
+			}
+			if (episodeSpaceLeft > 0 && undownloadedEpisodes > 0) {
+				for (FeedItem item : unreadItems) {
+					if (item.hasMedia() && !item.getMedia().isDownloaded()) {
+						itemsToDownload.add(item);
+						episodeSpaceLeft--;
+						undownloadedEpisodes--;
+						if (episodeSpaceLeft == 0 || undownloadedEpisodes == 0) {
+							break;
+						}
+					}
+				}
+			}
+			if (AppConfig.DEBUG)
+				Log.d(TAG, "Enqueueing " + itemsToDownload.size()
+						+ " items for download");
+
+			try {
+				downloadFeedItem(false, context,
+						itemsToDownload.toArray(new FeedItem[itemsToDownload
+								.size()]));
+			} catch (DownloadRequestException e) {
+				e.printStackTrace();
+			}
+
+		}
+	}
+
+	/**
+	 * This method will determine the number of episodes that have to be deleted
+	 * depending on a given number of episodes.
+	 * 
+	 * @return The argument that has to be passed to performAutoCleanup() so
+	 *         that the number of episodes fits into the episode cache.
+	 * */
+	private int getPerformAutoCleanupArgs(final int episodeNumber) {
+		if (episodeNumber >= 0) {
+			int downloadedEpisodes = getNumberOfDownloadedEpisodes();
+			if (downloadedEpisodes + episodeNumber >= UserPreferences
+					.getEpisodeCacheSize()) {
+
+				return downloadedEpisodes + episodeNumber
+						- UserPreferences.getEpisodeCacheSize();
+			}
+		}
+		return 0;
+	}
+
+	/**
+	 * Performs an auto-cleanup so that the number of downloaded episodes is
+	 * below or equal to the episode cache size. The method will be executed in
+	 * the caller's thread.
+	 */
+	public void performAutoCleanup(Context context) {
+		performAutoCleanup(context, getPerformAutoCleanupArgs(0));
+	}
+
+	/**
+	 * This method will try to delete a given number of episodes. An episode
+	 * will only be deleted if it is not in the queue.
+	 * 
+	 * @return The number of episodes that were actually deleted
+	 * */
+	private int performAutoCleanup(Context context, final int episodeNumber) {
+		int counter = 0;
+		if (episodeNumber > 0) {
+			int episodesLeft = episodeNumber;
+			feedloop: for (Feed feed : feeds) {
+				for (FeedItem item : feed.getItems()) {
+					if (item.hasMedia() && item.getMedia().isDownloaded()) {
+						if (!isInQueue(item) && item.isRead()) {
+							deleteFeedMedia(context, item.getMedia());
+							counter++;
+							episodesLeft--;
+							if (episodesLeft == 0) {
+								break feedloop;
+							}
+						}
+					}
+				}
+			}
+		}
+		if (AppConfig.DEBUG)
+			Log.d(TAG, String.format(
+					"Auto-delete deleted %d episodes (%d requested)", counter,
+					episodeNumber));
+
+		return counter;
+	}
+
+	/**
+	 * Counts items in the queue and the unread items list which haven't been
+	 * downloaded yet.
+	 */
+	private int getNumberOfUndownloadedEpisodes() {
+		int counter = 0;
+		for (FeedItem item : queue) {
+			if (item.hasMedia() && !item.getMedia().isDownloaded()) {
+				counter++;
+			}
+		}
+		for (FeedItem item : unreadItems) {
+			if (item.hasMedia() && !item.getMedia().isDownloaded()) {
+				counter++;
+			}
+		}
+		return counter;
+
+	}
+
+	/** Counts all downloaded items. */
+	private int getNumberOfDownloadedEpisodes() {
+		int counter = 0;
+		for (Feed feed : feeds) {
+			for (FeedItem item : feed.getItems()) {
+				if (item.hasMedia() && item.getMedia().isDownloaded()) {
+					counter++;
+				}
+			}
+		}
+		if (AppConfig.DEBUG)
+			Log.d(TAG, "Number of downloaded episodes: " + counter);
+		return counter;
+	}
+
+	/**
+	 * Enqueues all items that are currently in the unreadItems list and marks
+	 * them as 'read'.
+	 */
 	public void enqueueAllNewItems(final Context context) {
 		if (!unreadItems.isEmpty()) {
 			addQueueItem(context,
@@ -632,6 +791,49 @@ public class FeedManager {
 		}
 	}
 
+	/**
+	 * Adds a feeditem to the queue at the specified index if it is not in the
+	 * queue yet. The item is marked as 'read'.
+	 */
+	public void addQueueItemAt(final Context context, final FeedItem item,
+			final int index) {
+		contentChanger.post(new Runnable() {
+
+			@Override
+			public void run() {
+				if (!queue.contains(item)) {
+					queue.add(index, item);
+					if (!item.isRead()) {
+						markItemRead(context, item, true, false);
+					}
+				}
+				eventDist.sendQueueUpdateBroadcast();
+
+				dbExec.execute(new Runnable() {
+
+					@Override
+					public void run() {
+						PodDBAdapter adapter = new PodDBAdapter(context);
+						adapter.open();
+						adapter.setQueue(queue);
+						adapter.close();
+					}
+				});
+				new Thread() {
+					@Override
+					public void run() {
+						autodownloadUndownloadedItems(context);
+					}
+				}.start();
+			}
+		});
+
+	}
+
+	/**
+	 * Adds FeedItems to the queue if they are not in the queue yet. The items
+	 * are marked as 'read'.
+	 */
 	public void addQueueItem(final Context context, final FeedItem... items) {
 		if (items.length > 0) {
 			contentChanger.post(new Runnable() {
@@ -641,9 +843,12 @@ public class FeedManager {
 					for (FeedItem item : items) {
 						if (!queue.contains(item)) {
 							queue.add(item);
+							if (!item.isRead()) {
+								markItemRead(context, item, true, false);
+							}
 						}
 					}
-					sendQueueUpdateBroadcast(context, items[0]);
+					eventDist.sendQueueUpdateBroadcast();
 					dbExec.execute(new Runnable() {
 
 						@Override
@@ -654,6 +859,12 @@ public class FeedManager {
 							adapter.close();
 						}
 					});
+					new Thread() {
+						@Override
+						public void run() {
+							autodownloadUndownloadedItems(context);
+						}
+					}.start();
 				}
 			});
 		}
@@ -679,7 +890,7 @@ public class FeedManager {
 		if (AppConfig.DEBUG)
 			Log.d(TAG, "Clearing queue");
 		queue.clear();
-		sendQueueUpdateBroadcast(context, null);
+		eventDist.sendQueueUpdateBroadcast();
 		dbExec.execute(new Runnable() {
 
 			@Override
@@ -693,20 +904,18 @@ public class FeedManager {
 
 	}
 
-	/** Uses external adapter. */
-	public void removeQueueItem(FeedItem item, PodDBAdapter adapter) {
+	/** Removes a FeedItem from the queue. Uses external PodDBAdapter. */
+	private void removeQueueItem(FeedItem item, PodDBAdapter adapter) {
 		boolean removed = queue.remove(item);
 		if (removed) {
 			adapter.setQueue(queue);
 		}
-
 	}
 
-	/** Uses its own adapter. */
+	/** Removes a FeedItem from the queue. */
 	public void removeQueueItem(final Context context, FeedItem item) {
 		boolean removed = queue.remove(item);
 		if (removed) {
-			autoDeleteIfPossible(context, item.getMedia());
 			dbExec.execute(new Runnable() {
 
 				@Override
@@ -719,50 +928,13 @@ public class FeedManager {
 			});
 
 		}
-		sendQueueUpdateBroadcast(context, item);
-	}
-
-	/**
-	 * Delete the episode of this FeedMedia object if auto-delete is enabled and
-	 * it is not the last played media or it is the last played media and
-	 * playback has been completed.
-	 */
-	public void autoDeleteIfPossible(Context context, FeedMedia media) {
-		if (media != null) {
-			SharedPreferences prefs = PreferenceManager
-					.getDefaultSharedPreferences(context
-							.getApplicationContext());
-			boolean autoDelete = prefs.getBoolean(PodcastApp.PREF_AUTO_DELETE,
-					false);
-			if (autoDelete) {
-				long lastPlayedId = prefs.getLong(
-						PlaybackService.PREF_LAST_PLAYED_ID, -1);
-				long autoDeleteId = prefs.getLong(
-						PlaybackService.PREF_AUTODELETE_MEDIA_ID, -1);
-				boolean playbackCompleted = prefs
-						.getBoolean(
-								PlaybackService.PREF_AUTO_DELETE_MEDIA_PLAYBACK_COMPLETED,
-								false);
-				if ((media.getId() != lastPlayedId)
-						&& ((media.getId() != autoDeleteId) || (media.getId() == autoDeleteId && playbackCompleted))) {
-					if (AppConfig.DEBUG)
-						Log.d(TAG, "Performing auto-cleanup");
-					deleteFeedMedia(context, media);
-
-					SharedPreferences.Editor editor = prefs.edit();
-					editor.putLong(PlaybackService.PREF_AUTODELETE_MEDIA_ID, -1);
-					editor.commit();
-				} else {
-					if (AppConfig.DEBUG)
-						Log.d(TAG, "Didn't do auto-cleanup");
-				}
-			} else {
-				if (AppConfig.DEBUG)
-					Log.d(TAG, "Auto-delete preference is disabled");
+		new Thread() {
+			@Override
+			public void run() {
+				autodownloadUndownloadedItems(context);
 			}
-		} else {
-			Log.e(TAG, "Could not do auto-cleanup: media was null");
-		}
+		}.start();
+		eventDist.sendQueueUpdateBroadcast();
 	}
 
 	/**
@@ -797,15 +969,20 @@ public class FeedManager {
 				}
 			});
 			if (broadcastUpdate) {
-				sendQueueUpdateBroadcast(context, item);
+				eventDist.sendQueueUpdateBroadcast();
 			}
 		}
 	}
 
+	/** Returns true if the specified item is in the queue. */
 	public boolean isInQueue(FeedItem item) {
 		return queue.contains(item);
 	}
 
+	/**
+	 * Returns the FeedItem at the beginning of the queue or null if the queue
+	 * is empty.
+	 */
 	public FeedItem getFirstQueueItem() {
 		if (queue.isEmpty()) {
 			return null;
@@ -821,7 +998,7 @@ public class FeedManager {
 			public void run() {
 				feeds.add(feed);
 				Collections.sort(feeds, new FeedtitleComparator());
-				sendFeedUpdateBroadcast(context);
+				eventDist.sendFeedUpdateBroadcast();
 			}
 		});
 		setCompleteFeed(context, feed);
@@ -832,7 +1009,7 @@ public class FeedManager {
 	 * 
 	 * @return The saved Feed with a database ID
 	 */
-	public Feed updateFeed(Context context, final Feed newFeed) {
+	public Feed updateFeed(final Context context, final Feed newFeed) {
 		// Look up feed in the feedslist
 		final Feed savedFeed = searchFeedByIdentifyingValue(newFeed
 				.getIdentifyingValue());
@@ -879,12 +1056,18 @@ public class FeedManager {
 			savedFeed.setLastUpdate(newFeed.getLastUpdate());
 			savedFeed.setType(newFeed.getType());
 			setCompleteFeed(context, savedFeed);
+			new Thread() {
+				@Override
+				public void run() {
+					autodownloadUndownloadedItems(context);
+				}
+			}.start();
 			return savedFeed;
 		}
 
 	}
 
-	/** Get a Feed by its link */
+	/** Get a Feed by its identifying value. */
 	private Feed searchFeedByIdentifyingValue(String identifier) {
 		for (Feed feed : feeds) {
 			if (feed.getIdentifyingValue().equals(identifier)) {
@@ -919,7 +1102,7 @@ public class FeedManager {
 	}
 
 	/** Updates Information of an existing Feed. Uses external adapter. */
-	public void setFeed(Feed feed, PodDBAdapter adapter) {
+	private void setFeed(Feed feed, PodDBAdapter adapter) {
 		if (adapter != null) {
 			adapter.setFeed(feed);
 			feed.cacheDescriptionsOfItems();
@@ -929,7 +1112,7 @@ public class FeedManager {
 	}
 
 	/** Updates Information of an existing Feeditem. Uses external adapter. */
-	public void setFeedItem(FeedItem item, PodDBAdapter adapter) {
+	private void setFeedItem(FeedItem item, PodDBAdapter adapter) {
 		if (adapter != null) {
 			adapter.setSingleFeedItem(item);
 		} else {
@@ -938,7 +1121,7 @@ public class FeedManager {
 	}
 
 	/** Updates Information of an existing Feedimage. Uses external adapter. */
-	public void setFeedImage(FeedImage image, PodDBAdapter adapter) {
+	private void setFeedImage(FeedImage image, PodDBAdapter adapter) {
 		if (adapter != null) {
 			adapter.setImage(image);
 		} else {
@@ -950,7 +1133,7 @@ public class FeedManager {
 	 * Updates Information of an existing Feedmedia object. Uses external
 	 * adapter.
 	 */
-	public void setFeedImage(FeedMedia media, PodDBAdapter adapter) {
+	private void setFeedImage(FeedMedia media, PodDBAdapter adapter) {
 		if (adapter != null) {
 			adapter.setMedia(media);
 		} else {
@@ -1126,6 +1309,7 @@ public class FeedManager {
 		return null;
 	}
 
+	/** Get a download status object from the download log by its FeedFile. */
 	public DownloadStatus getDownloadStatus(FeedFile feedFile) {
 		for (DownloadStatus status : downloadLog) {
 			if (status.getFeedFile() == feedFile) {
@@ -1137,10 +1321,6 @@ public class FeedManager {
 
 	/** Reads the database */
 	public void loadDBData(Context context) {
-		updateArrays(context);
-	}
-
-	public void updateArrays(Context context) {
 		feeds.clear();
 		PodDBAdapter adapter = new PodDBAdapter(context);
 		adapter.open();
@@ -1445,6 +1625,17 @@ public class FeedManager {
 		});
 	}
 
+	/**
+	 * Searches the descriptions of FeedItems of a specific feed for a given
+	 * string.
+	 * 
+	 * @param feed
+	 *            The feed whose items should be searched.
+	 * @param query
+	 *            The search string
+	 * @param callback
+	 *            A callback which will be used to return the search result
+	 * */
 	public void searchFeedItemDescription(final Context context,
 			final Feed feed, final String query,
 			FeedManager.QueryTaskCallback callback) {
@@ -1460,6 +1651,17 @@ public class FeedManager {
 		});
 	}
 
+	/**
+	 * Searches the 'contentEncoded' field of FeedItems of a specific feed for a
+	 * given string.
+	 * 
+	 * @param feed
+	 *            The feed whose items should be searched.
+	 * @param query
+	 *            The search string
+	 * @param callback
+	 *            A callback which will be used to return the search result
+	 * */
 	public void searchFeedItemContentEncoded(final Context context,
 			final Feed feed, final String query,
 			FeedManager.QueryTaskCallback callback) {
@@ -1475,24 +1677,132 @@ public class FeedManager {
 		});
 	}
 
-	public List<Feed> getFeeds() {
+	/** Returns the number of feeds that are currently in the feeds list. */
+	public int getFeedsSize() {
+		return feeds.size();
+	}
+
+	/** Returns the feed at the specified index of the feeds list. */
+	public Feed getFeedAtIndex(int index) {
+		return feeds.get(index);
+	}
+
+	/** Returns an array that contains all feeds of the feed manager. */
+	public Feed[] getFeedsArray() {
+		return feeds.toArray(new Feed[feeds.size()]);
+	}
+
+	List<Feed> getFeeds() {
 		return feeds;
 	}
 
-	public List<FeedItem> getUnreadItems() {
-		return unreadItems;
+	/**
+	 * Returns the number of items that are currently in the queue.
+	 * 
+	 * @param enableEpisodeFilter
+	 *            true if items without episodes should be ignored by this
+	 *            method if the episode filter was enabled by the user.
+	 * */
+	public int getQueueSize(boolean enableEpisodeFilter) {
+		if (UserPreferences.isDisplayOnlyEpisodes() && enableEpisodeFilter) {
+			return EpisodeFilter.countItemsWithEpisodes(queue);
+		} else {
+			return queue.size();
+		}
 	}
 
-	public ArrayList<DownloadStatus> getDownloadLog() {
-		return downloadLog;
+	/**
+	 * Returns the FeedItem at the specified index of the queue.
+	 * 
+	 * @param enableEpisodeFilter
+	 *            true if items without episodes should be ignored by this
+	 *            method if the episode filter was enabled by the user.
+	 * 
+	 * @throws IndexOutOfBoundsException
+	 *             if index is out of range
+	 * */
+	public FeedItem getQueueItemAtIndex(int index, boolean enableEpisodeFilter) {
+		if (UserPreferences.isDisplayOnlyEpisodes() && enableEpisodeFilter) {
+			return EpisodeFilter.accessEpisodeByIndex(queue, index);
+		} else {
+			return queue.get(index);
+		}
 	}
 
-	public List<FeedItem> getQueue() {
-		return queue;
+	/**
+	 * Returns true if the first item in the queue is currently being played or
+	 * false otherwise. If the queue is empty, this method will also return
+	 * false.
+	 * */
+	public boolean firstQueueItemIsPlaying() {
+		FeedManager manager = FeedManager.getInstance();
+		int queueSize = manager.getQueueSize(true);
+		if (queueSize == 0) {
+			return false;
+		} else {
+			FeedItem item = getQueueItemAtIndex(0, true);
+			return item.getState() == FeedItem.State.PLAYING;
+		}
 	}
 
-	public List<FeedItem> getPlaybackHistory() {
-		return playbackHistory;
+	/**
+	 * Returns the number of unread items.
+	 * 
+	 * @param enableEpisodeFilter
+	 *            true if items without episodes should be ignored by this
+	 *            method if the episode filter was enabled by the user.
+	 * */
+	public int getUnreadItemsSize(boolean enableEpisodeFilter) {
+		if (UserPreferences.isDisplayOnlyEpisodes() && enableEpisodeFilter) {
+			return EpisodeFilter.countItemsWithEpisodes(unreadItems);
+		} else {
+			return unreadItems.size();
+		}
+	}
+
+	/**
+	 * Returns the FeedItem at the specified index of the unread items list.
+	 * 
+	 * @param enableEpisodeFilter
+	 *            true if items without episodes should be ignored by this
+	 *            method if the episode filter was enabled by the user.
+	 * 
+	 * @throws IndexOutOfBoundsException
+	 *             if index is out of range
+	 * */
+	public FeedItem getUnreadItemAtIndex(int index, boolean enableEpisodeFilter) {
+		if (UserPreferences.isDisplayOnlyEpisodes() && enableEpisodeFilter) {
+			return EpisodeFilter.accessEpisodeByIndex(unreadItems, index);
+		} else {
+			return unreadItems.get(index);
+		}
+	}
+
+	/**
+	 * Returns the number of items in the playback history.
+	 * */
+	public int getPlaybackHistorySize() {
+		return playbackHistory.size();
+	}
+
+	/**
+	 * Returns the FeedItem at the specified index of the playback history.
+	 * 
+	 * @throws IndexOutOfBoundsException
+	 *             if index is out of range
+	 * */
+	public FeedItem getPlaybackHistoryItemIndex(int index) {
+		return playbackHistory.get(index);
+	}
+
+	/** Returns the number of items in the download log */
+	public int getDownloadLogSize() {
+		return downloadLog.size();
+	}
+
+	/** Returns the download status at the specified index of the download log. */
+	public DownloadStatus getDownloadStatusFromLogAtIndex(int index) {
+		return downloadLog.get(index);
 	}
 
 	/** Is called by a FeedManagerTask after completion. */
