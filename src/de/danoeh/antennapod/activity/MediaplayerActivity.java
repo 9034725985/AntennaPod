@@ -5,6 +5,7 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.PixelFormat;
+import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.widget.ImageButton;
@@ -18,19 +19,18 @@ import com.actionbarsherlock.view.MenuInflater;
 import com.actionbarsherlock.view.MenuItem;
 
 import de.danoeh.antennapod.AppConfig;
-import de.danoeh.antennapod.PodcastApp;
 import de.danoeh.antennapod.R;
-import de.danoeh.antennapod.dialog.DownloadRequestErrorDialogCreator;
+import de.danoeh.antennapod.asynctask.FlattrClickWorker;
 import de.danoeh.antennapod.dialog.TimeDialog;
 import de.danoeh.antennapod.feed.FeedManager;
-import de.danoeh.antennapod.feed.FeedMedia;
+import de.danoeh.antennapod.preferences.UserPreferences;
 import de.danoeh.antennapod.service.PlaybackService;
-import de.danoeh.antennapod.storage.DownloadRequestException;
 import de.danoeh.antennapod.util.Converter;
-import de.danoeh.antennapod.util.MediaPlayerError;
-import de.danoeh.antennapod.util.PlaybackController;
+import de.danoeh.antennapod.util.ShareUtils;
 import de.danoeh.antennapod.util.StorageUtils;
-import de.danoeh.antennapod.util.menuhandler.FeedItemMenuHandler;
+import de.danoeh.antennapod.util.playback.MediaPlayerError;
+import de.danoeh.antennapod.util.playback.Playable;
+import de.danoeh.antennapod.util.playback.PlaybackController;
 
 /**
  * Provides general features which are both needed for playing audio and video
@@ -91,7 +91,7 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 
 			@Override
 			public void onSleepTimerUpdate() {
-				invalidateOptionsMenu();
+				supportInvalidateOptionsMenu();
 			}
 
 			@Override
@@ -128,17 +128,22 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 			public void onShutdownNotification() {
 				finish();
 			}
+
+			@Override
+			public void onPlaybackEnd() {
+				finish();
+			}
 		};
 
 	}
 
 	protected void onServiceQueried() {
-		invalidateOptionsMenu();
+		supportInvalidateOptionsMenu();
 	}
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
-		setTheme(PodcastApp.getThemeResourceId());
+		setTheme(UserPreferences.getTheme());
 		super.onCreate(savedInstanceState);
 		if (AppConfig.DEBUG)
 			Log.d(TAG, "Creating Activity");
@@ -219,15 +224,15 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 
 	@Override
 	public boolean onPrepareOptionsMenu(Menu menu) {
-		FeedMedia media = controller.getMedia();
+		Playable media = controller.getMedia();
 
 		menu.findItem(R.id.support_item).setVisible(
-				media != null && media.getItem().getPaymentLink() != null);
+				media != null && media.getPaymentLink() != null);
 		menu.findItem(R.id.share_link_item).setVisible(
-				media != null && media.getItem().getLink() != null);
+				media != null && media.getWebsiteLink() != null);
 		menu.findItem(R.id.visit_website_item).setVisible(
-				media != null && media.getItem().getLink() != null);
-
+				media != null && media.getWebsiteLink() != null);
+		menu.findItem(R.id.skip_episode_item).setVisible(media != null);
 		boolean sleepTimerSet = controller.sleepTimerActive();
 		boolean sleepTimerNotSet = controller.sleepTimerNotActive();
 		menu.findItem(R.id.set_sleeptimer_item).setVisible(sleepTimerNotSet);
@@ -237,69 +242,84 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 
 	@Override
 	public boolean onOptionsItemSelected(MenuItem item) {
-		switch (item.getItemId()) {
-		case android.R.id.home:
+		Playable media = controller.getMedia();
+		if (item.getItemId() == android.R.id.home) {
 			Intent intent = new Intent(MediaplayerActivity.this,
 					MainActivity.class);
 			intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
 					| Intent.FLAG_ACTIVITY_NEW_TASK);
 			startActivity(intent);
-			break;
-		case R.id.disable_sleeptimer_item:
-			if (controller.serviceAvailable()) {
-				AlertDialog.Builder stDialog = new AlertDialog.Builder(this);
-				stDialog.setTitle(R.string.sleep_timer_label);
-				stDialog.setMessage(getString(R.string.time_left_label)
-						+ Converter.getDurationStringLong((int) controller
-								.getSleepTimerTimeLeft()));
-				stDialog.setPositiveButton(R.string.disable_sleeptimer_label,
-						new DialogInterface.OnClickListener() {
+			return true;
+		} else if (media != null) {
+			switch (item.getItemId()) {
+			case R.id.disable_sleeptimer_item:
+				if (controller.serviceAvailable()) {
+					AlertDialog.Builder stDialog = new AlertDialog.Builder(this);
+					stDialog.setTitle(R.string.sleep_timer_label);
+					stDialog.setMessage(getString(R.string.time_left_label)
+							+ Converter.getDurationStringLong((int) controller
+									.getSleepTimerTimeLeft()));
+					stDialog.setPositiveButton(
+							R.string.disable_sleeptimer_label,
+							new DialogInterface.OnClickListener() {
 
-							@Override
-							public void onClick(DialogInterface dialog,
-									int which) {
-								dialog.dismiss();
-								controller.disableSleepTimer();
-							}
-						});
-				stDialog.setNegativeButton(R.string.cancel_label,
-						new DialogInterface.OnClickListener() {
+								@Override
+								public void onClick(DialogInterface dialog,
+										int which) {
+									dialog.dismiss();
+									controller.disableSleepTimer();
+								}
+							});
+					stDialog.setNegativeButton(R.string.cancel_label,
+							new DialogInterface.OnClickListener() {
 
-							@Override
-							public void onClick(DialogInterface dialog,
-									int which) {
-								dialog.dismiss();
-							}
-						});
-				stDialog.create().show();
-			}
-			break;
-		case R.id.set_sleeptimer_item:
-			if (controller.serviceAvailable()) {
-				TimeDialog td = new TimeDialog(this,
-						R.string.set_sleeptimer_label,
-						R.string.set_sleeptimer_label) {
-
-					@Override
-					public void onTimeEntered(long millis) {
-						controller.setSleepTimer(millis);
-					}
-				};
-				td.show();
+								@Override
+								public void onClick(DialogInterface dialog,
+										int which) {
+									dialog.dismiss();
+								}
+							});
+					stDialog.create().show();
+				}
 				break;
+			case R.id.set_sleeptimer_item:
+				if (controller.serviceAvailable()) {
+					TimeDialog td = new TimeDialog(this,
+							R.string.set_sleeptimer_label,
+							R.string.set_sleeptimer_label) {
+
+						@Override
+						public void onTimeEntered(long millis) {
+							controller.setSleepTimer(millis);
+						}
+					};
+					td.show();
+					break;
+
+				}
+			case R.id.visit_website_item:
+				Uri uri = Uri.parse(media.getWebsiteLink());
+				startActivity(new Intent(Intent.ACTION_VIEW, uri));
+				break;
+			case R.id.support_item:
+				new FlattrClickWorker(this, media.getPaymentLink())
+						.executeAsync();
+				break;
+			case R.id.share_link_item:
+				ShareUtils.shareLink(this, media.getWebsiteLink());
+				break;
+			case R.id.skip_episode_item:
+				sendBroadcast(new Intent(
+						PlaybackService.ACTION_SKIP_CURRENT_EPISODE));
+				break;
+			default:
+				return false;
 
 			}
-		default:
-			try {
-				return FeedItemMenuHandler.onMenuItemClicked(this, item.getItemId(),
-						controller.getMedia().getItem());
-			} catch (DownloadRequestException e) {
-				e.printStackTrace();
-				DownloadRequestErrorDialogCreator.newRequestErrorDialog(this,
-						e.getMessage());
-			}
+			return true;
+		} else {
+			return false;
 		}
-		return true;
 	}
 
 	@Override
@@ -363,7 +383,7 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 	protected void loadMediaInfo() {
 		if (AppConfig.DEBUG)
 			Log.d(TAG, "Loading media info");
-		FeedMedia media = controller.getMedia();
+		Playable media = controller.getMedia();
 		if (media != null) {
 			txtvPosition.setText(Converter.getDurationStringLong((media
 					.getPosition())));

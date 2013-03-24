@@ -28,6 +28,7 @@ import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
 import android.media.RemoteControlClient;
 import android.media.RemoteControlClient.MetadataEditor;
+import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.IBinder;
 import android.preference.PreferenceManager;
@@ -36,52 +37,31 @@ import android.util.Log;
 import android.view.KeyEvent;
 import android.view.SurfaceHolder;
 import de.danoeh.antennapod.AppConfig;
-import de.danoeh.antennapod.PodcastApp;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.activity.AudioplayerActivity;
 import de.danoeh.antennapod.activity.VideoplayerActivity;
 import de.danoeh.antennapod.feed.Chapter;
-import de.danoeh.antennapod.feed.Feed;
+import de.danoeh.antennapod.feed.FeedComponent;
 import de.danoeh.antennapod.feed.FeedItem;
 import de.danoeh.antennapod.feed.FeedManager;
 import de.danoeh.antennapod.feed.FeedMedia;
 import de.danoeh.antennapod.feed.MediaType;
+import de.danoeh.antennapod.preferences.PlaybackPreferences;
+import de.danoeh.antennapod.preferences.UserPreferences;
 import de.danoeh.antennapod.receiver.MediaButtonReceiver;
 import de.danoeh.antennapod.receiver.PlayerWidget;
 import de.danoeh.antennapod.util.BitmapDecoder;
-import de.danoeh.antennapod.util.ChapterUtils;
+import de.danoeh.antennapod.util.flattr.FlattrUtils;
+import de.danoeh.antennapod.util.playback.Playable;
+import de.danoeh.antennapod.util.playback.Playable.PlayableException;
 
 /** Controls the MediaPlayer that plays a FeedMedia-file */
 public class PlaybackService extends Service {
 	/** Logging tag */
 	private static final String TAG = "PlaybackService";
 
-	/** Contains the id of the media that was played last. */
-	public static final String PREF_LAST_PLAYED_ID = "de.danoeh.antennapod.preferences.lastPlayedId";
-	/** Contains the feed id of the last played item. */
-	public static final String PREF_LAST_PLAYED_FEED_ID = "de.danoeh.antennapod.preferences.lastPlayedFeedId";
-	/**
-	 * ID of the media object that is currently being played. This preference is
-	 * set to NO_MEDIA_PLAYING after playback has been completed and is set as
-	 * soon as the 'play' button is pressed.
-	 */
-	public static final String PREF_CURRENTLY_PLAYING_MEDIA = "de.danoeh.antennapod.preferences.currentlyPlayingMedia";
-	/** True if last played media was streamed. */
-	public static final String PREF_LAST_IS_STREAM = "de.danoeh.antennapod.preferences.lastIsStream";
-	/** True if last played media was a video. */
-	public static final String PREF_LAST_IS_VIDEO = "de.danoeh.antennapod.preferences.lastIsVideo";
-	/** True if playback of last played media has been completed. */
-	public static final String PREF_AUTO_DELETE_MEDIA_PLAYBACK_COMPLETED = "de.danoeh.antennapod.preferences.lastPlaybackCompleted";
-	/**
-	 * ID of the last played media which should be auto-deleted as soon as
-	 * PREF_LAST_PLAYED_ID changes.
-	 */
-	public static final String PREF_AUTODELETE_MEDIA_ID = "de.danoeh.antennapod.preferences.autoDeleteMediaId";
-
-	/** Contains the id of the FeedMedia object. */
-	public static final String EXTRA_MEDIA_ID = "extra.de.danoeh.antennapod.service.mediaId";
-	/** Contains the id of the Feed object of the FeedMedia. */
-	public static final String EXTRA_FEED_ID = "extra.de.danoeh.antennapod.service.feedId";
+	/** Parcelable of type Playable. */
+	public static final String EXTRA_PLAYABLE = "PlaybackService.PlayableExtra";
 	/** True if media should be streamed. */
 	public static final String EXTRA_SHOULD_STREAM = "extra.de.danoeh.antennapod.service.shouldStream";
 	/**
@@ -104,6 +84,12 @@ public class PlaybackService extends Service {
 	 */
 	public static final String ACTION_SHUTDOWN_PLAYBACK_SERVICE = "action.de.danoeh.antennapod.service.actionShutdownPlaybackService";
 
+	/**
+	 * If the PlaybackService receives this action, it will end playback of the
+	 * current episode and load the next episode if there is one available.
+	 * */
+	public static final String ACTION_SKIP_CURRENT_EPISODE = "action.de.danoeh.antennapod.service.skipCurrentEpisode";
+
 	/** Used in NOTIFICATION_TYPE_RELOAD. */
 	public static final int EXTRA_CODE_AUDIO = 1;
 	public static final int EXTRA_CODE_VIDEO = 2;
@@ -116,6 +102,8 @@ public class PlaybackService extends Service {
 	public static final int NOTIFICATION_TYPE_SLEEPTIMER_UPDATE = 4;
 	public static final int NOTIFICATION_TYPE_BUFFER_START = 5;
 	public static final int NOTIFICATION_TYPE_BUFFER_END = 6;
+	/** No more episodes are going to be played. */
+	public static final int NOTIFICATION_TYPE_PLAYBACK_END = 7;
 
 	/**
 	 * Returned by getPositionSafe() or getDurationSafe() if the playbackService
@@ -134,8 +122,8 @@ public class PlaybackService extends Service {
 	private MediaPlayer player;
 	private RemoteControlClient remoteControlClient;
 
-	private FeedMedia media;
-	private Feed feed;
+	private Playable media;
+
 	/** True if media should be streamed (Extracted from Intent Extra) . */
 	private boolean shouldStream;
 
@@ -154,8 +142,6 @@ public class PlaybackService extends Service {
 	private SleepTimer sleepTimer;
 	private Future sleepTimerFuture;
 
-	private Thread chapterLoader;
-
 	private static final int SCHED_EX_POOL_SIZE = 3;
 	private ScheduledThreadPoolExecutor schedExecutor;
 
@@ -165,9 +151,6 @@ public class PlaybackService extends Service {
 
 	/** True if mediaplayer was paused because it lost audio focus temporarily */
 	private boolean pausedBecauseOfTransientAudiofocusLoss;
-
-	/** Value of PREF_CURRENTLY_PLAYING_MEDIA if no media is playing. */
-	public static final long NO_MEDIA_PLAYING = -1;
 
 	private final IBinder mBinder = new LocalBinder();
 
@@ -197,11 +180,7 @@ public class PlaybackService extends Service {
 				return new Intent(context, AudioplayerActivity.class);
 			}
 		} else {
-			SharedPreferences pref = PreferenceManager
-					.getDefaultSharedPreferences(context
-							.getApplicationContext());
-			boolean isVideo = pref.getBoolean(PREF_LAST_IS_VIDEO, false);
-			if (isVideo) {
+			if (PlaybackPreferences.getCurrentEpisodeIsVideo()) {
 				return new Intent(context, VideoplayerActivity.class);
 			} else {
 				return new Intent(context, AudioplayerActivity.class);
@@ -213,43 +192,13 @@ public class PlaybackService extends Service {
 	 * Same as getPlayerActivityIntent(context), but here the type of activity
 	 * depends on the FeedMedia that is provided as an argument.
 	 */
-	public static Intent getPlayerActivityIntent(Context context,
-			FeedMedia media) {
+	public static Intent getPlayerActivityIntent(Context context, Playable media) {
 		MediaType mt = media.getMediaType();
 		if (mt == MediaType.VIDEO) {
 			return new Intent(context, VideoplayerActivity.class);
 		} else {
 			return new Intent(context, AudioplayerActivity.class);
 		}
-	}
-
-	/** Get last played FeedMedia object or null if it doesn't exist. */
-	public static FeedMedia getLastPlayedMediaFromPreferences(Context context) {
-		SharedPreferences prefs = PreferenceManager
-				.getDefaultSharedPreferences(context.getApplicationContext());
-		long mediaId = prefs.getLong(PlaybackService.PREF_LAST_PLAYED_ID, -1);
-		long feedId = prefs.getLong(PlaybackService.PREF_LAST_PLAYED_FEED_ID,
-				-1);
-		FeedManager manager = FeedManager.getInstance();
-		if (mediaId != -1 && feedId != -1) {
-			Feed feed = manager.getFeed(feedId);
-			if (feed != null) {
-				return manager.getFeedMedia(mediaId, feed);
-			}
-		}
-		return null;
-	}
-
-	private void setLastPlayedMediaId(long mediaId) {
-		SharedPreferences prefs = PreferenceManager
-				.getDefaultSharedPreferences(getApplicationContext());
-		long autoDeleteId = prefs.getLong(PREF_AUTODELETE_MEDIA_ID, -1);
-		SharedPreferences.Editor editor = prefs.edit();
-		if (mediaId == autoDeleteId) {
-			editor.putBoolean(PREF_AUTO_DELETE_MEDIA_PLAYBACK_COMPLETED, false);
-		}
-		editor.putLong(PREF_LAST_PLAYED_ID, mediaId);
-		editor.commit();
 	}
 
 	@SuppressLint("NewApi")
@@ -295,6 +244,8 @@ public class PlaybackService extends Service {
 				ACTION_SHUTDOWN_PLAYBACK_SERVICE));
 		registerReceiver(audioBecomingNoisy, new IntentFilter(
 				AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+		registerReceiver(skipCurrentEpisodeReceiver, new IntentFilter(
+				ACTION_SKIP_CURRENT_EPISODE));
 
 	}
 
@@ -325,6 +276,7 @@ public class PlaybackService extends Service {
 		unregisterReceiver(headsetDisconnected);
 		unregisterReceiver(shutdownReceiver);
 		unregisterReceiver(audioBecomingNoisy);
+		unregisterReceiver(skipCurrentEpisodeReceiver);
 		if (android.os.Build.VERSION.SDK_INT >= 14) {
 			audioManager.unregisterRemoteControlClient(remoteControlClient);
 		}
@@ -350,7 +302,7 @@ public class PlaybackService extends Service {
 			case AudioManager.AUDIOFOCUS_LOSS:
 				if (AppConfig.DEBUG)
 					Log.d(TAG, "Lost audio focus");
-				pause(true, true);
+				pause(true, false);
 				stopSelf();
 				break;
 			case AudioManager.AUDIOFOCUS_GAIN:
@@ -384,6 +336,8 @@ public class PlaybackService extends Service {
 
 	@Override
 	public int onStartCommand(Intent intent, int flags, int startId) {
+		super.onStartCommand(intent, flags, startId);
+		
 		if (AppConfig.DEBUG)
 			Log.d(TAG, "OnStartCommand called");
 		int keycode = intent.getIntExtra(MediaButtonReceiver.EXTRA_KEYCODE, -1);
@@ -393,26 +347,24 @@ public class PlaybackService extends Service {
 			handleKeycode(keycode);
 		} else {
 
-			long mediaId = intent.getLongExtra(EXTRA_MEDIA_ID, -1);
-			long feedId = intent.getLongExtra(EXTRA_FEED_ID, -1);
+			Playable playable = intent.getParcelableExtra(EXTRA_PLAYABLE);
 			boolean playbackType = intent.getBooleanExtra(EXTRA_SHOULD_STREAM,
 					true);
-			if (mediaId == -1 || feedId == -1) {
-				Log.e(TAG,
-						"Media ID or Feed ID wasn't provided to the Service.");
-				if (media == null || feed == null) {
+			if (playable == null) {
+				Log.e(TAG, "Playable extra wasn't sent to the service");
+				if (media == null) {
 					stopSelf();
 				}
 				// Intent values appear to be valid
 				// check if already playing and playbackType is the same
-			} else if (media == null || mediaId != media.getId()
+			} else if (media == null || playable != media
 					|| playbackType != shouldStream) {
 				pause(true, false);
 				player.reset();
 				sendNotificationBroadcast(NOTIFICATION_TYPE_RELOAD, 0);
-				if (media == null || mediaId != media.getId()) {
-					feed = manager.getFeed(feedId);
-					media = manager.getFeedMedia(mediaId, feed);
+				if (media == null
+						|| playable.getIdentifier() != media.getIdentifier()) {
+					media = playable;
 				}
 
 				if (media != null) {
@@ -487,22 +439,47 @@ public class PlaybackService extends Service {
 		if (status == PlayerStatus.STOPPED
 				|| status == PlayerStatus.AWAITING_VIDEO_SURFACE) {
 			try {
-				if (shouldStream) {
-					player.setDataSource(media.getDownload_url());
-					setStatus(PlayerStatus.PREPARING);
-					player.prepareAsync();
-				} else {
-					player.setDataSource(media.getFile_url());
-					setStatus(PlayerStatus.PREPARING);
-					player.prepare();
-				}
+				InitTask initTask = new InitTask() {
+
+					@Override
+					protected void onPostExecute(Playable result) {
+						if (status == PlayerStatus.INITIALIZING) {
+							if (result != null) {
+								try {
+									if (shouldStream) {
+										player.setDataSource(media
+												.getStreamUrl());
+										setStatus(PlayerStatus.PREPARING);
+										player.prepareAsync();
+									} else {
+										player.setDataSource(media
+												.getLocalMediaUrl());
+										setStatus(PlayerStatus.PREPARING);
+										player.prepareAsync();
+									}
+								} catch (IOException e) {
+									e.printStackTrace();
+								}
+							} else {
+								setStatus(PlayerStatus.ERROR);
+								sendBroadcast(new Intent(
+										ACTION_SHUTDOWN_PLAYBACK_SERVICE));
+							}
+						}
+					}
+
+					@Override
+					protected void onPreExecute() {
+						setStatus(PlayerStatus.INITIALIZING);
+					}
+
+				};
+				initTask.executeAsync(media);
 			} catch (IllegalArgumentException e) {
 				e.printStackTrace();
 			} catch (SecurityException e) {
 				e.printStackTrace();
 			} catch (IllegalStateException e) {
-				e.printStackTrace();
-			} catch (IOException e) {
 				e.printStackTrace();
 			}
 		}
@@ -519,7 +496,9 @@ public class PlaybackService extends Service {
 		player.release();
 		player = createMediaPlayer();
 		status = PlayerStatus.STOPPED;
-		initMediaplayer();
+		if (media != null) {
+			initMediaplayer();
+		}
 	}
 
 	public void notifyVideoSurfaceAbandoned() {
@@ -535,18 +514,60 @@ public class PlaybackService extends Service {
 			if (mediaType == MediaType.AUDIO) {
 				if (AppConfig.DEBUG)
 					Log.d(TAG, "Mime type is audio");
-				playingVideo = false;
-				if (shouldStream) {
-					player.setDataSource(media.getDownload_url());
-				} else if (media.getFile_url() != null) {
-					player.setDataSource(media.getFile_url());
-				}
-				if (prepareImmediately) {
-					setStatus(PlayerStatus.PREPARING);
-					player.prepareAsync();
-				} else {
-					setStatus(PlayerStatus.INITIALIZED);
-				}
+
+				InitTask initTask = new InitTask() {
+
+					@Override
+					protected void onPostExecute(Playable result) {
+						// check if state of service has changed. If it has
+						// changed, assume that loaded metadata is not needed
+						// anymore.
+						if (status == PlayerStatus.INITIALIZING) {
+							if (result != null) {
+								playingVideo = false;
+								try {
+									if (shouldStream) {
+										player.setDataSource(media
+												.getStreamUrl());
+									} else if (media.localFileAvailable()) {
+										player.setDataSource(media
+												.getLocalMediaUrl());
+									}
+
+									if (prepareImmediately) {
+										setStatus(PlayerStatus.PREPARING);
+										player.prepareAsync();
+									} else {
+										setStatus(PlayerStatus.INITIALIZED);
+									}
+								} catch (IOException e) {
+									e.printStackTrace();
+									media = null;
+									setStatus(PlayerStatus.ERROR);
+									sendBroadcast(new Intent(
+											ACTION_SHUTDOWN_PLAYBACK_SERVICE));
+								}
+							} else {
+								Log.e(TAG, "InitTask could not load metadata");
+								media = null;
+								setStatus(PlayerStatus.ERROR);
+								sendBroadcast(new Intent(
+										ACTION_SHUTDOWN_PLAYBACK_SERVICE));
+							}
+						} else {
+							if (AppConfig.DEBUG)
+								Log.d(TAG,
+										"Status of player has changed during initialization. Stopping init process.");
+						}
+					}
+
+					@Override
+					protected void onPreExecute() {
+						setStatus(PlayerStatus.INITIALIZING);
+					}
+
+				};
+				initTask.executeAsync(media);
 			} else if (mediaType == MediaType.VIDEO) {
 				if (AppConfig.DEBUG)
 					Log.d(TAG, "Mime type is video");
@@ -560,8 +581,6 @@ public class PlaybackService extends Service {
 		} catch (SecurityException e) {
 			e.printStackTrace();
 		} catch (IllegalStateException e) {
-			e.printStackTrace();
-		} catch (IOException e) {
 			e.printStackTrace();
 		}
 	}
@@ -600,39 +619,6 @@ public class PlaybackService extends Service {
 			setStatus(PlayerStatus.PREPARED);
 			if (startWhenPrepared) {
 				play();
-			}
-			if (shouldStream && media.getItem().getChapters() == null) {
-				// load chapters if available
-				if (chapterLoader != null) {
-					chapterLoader.interrupt();
-				}
-				chapterLoader = new Thread() {
-
-					@Override
-					public void run() {
-						if (AppConfig.DEBUG)
-							Log.d(TAG, "Starting chapterLoader thread");
-						ChapterUtils
-								.readID3ChaptersFromFeedMediaDownloadUrl(media
-										.getItem());
-						if (media.getItem().getChapters() == null) {
-							ChapterUtils
-									.readOggChaptersFromMediaDownloadUrl(media
-											.getItem());
-						}
-						if (media.getItem().getChapters() != null
-								&& !interrupted()) {
-							sendNotificationBroadcast(NOTIFICATION_TYPE_RELOAD,
-									0);
-							manager.setFeedItem(PlaybackService.this,
-									media.getItem());
-						}
-						if (AppConfig.DEBUG)
-							Log.d(TAG, "ChapterLoaderThread has finished");
-					}
-
-				};
-				chapterLoader.start();
 			}
 		}
 	};
@@ -675,7 +661,7 @@ public class PlaybackService extends Service {
 				pause(true, true);
 			}
 			sendNotificationBroadcast(NOTIFICATION_TYPE_ERROR, what);
-			setCurrentlyPlayingMedia(NO_MEDIA_PLAYING);
+			setCurrentlyPlayingMedia(PlaybackPreferences.NO_MEDIA_PLAYING);
 			stopSelf();
 			return true;
 		}
@@ -685,67 +671,7 @@ public class PlaybackService extends Service {
 
 		@Override
 		public void onCompletion(MediaPlayer mp) {
-			if (AppConfig.DEBUG)
-				Log.d(TAG, "Playback completed");
-			audioManager.abandonAudioFocus(audioFocusChangeListener);
-			SharedPreferences prefs = PreferenceManager
-					.getDefaultSharedPreferences(getApplicationContext());
-			// Save state
-			cancelPositionSaver();
-			media.setPlaybackCompletionDate(new Date());
-			manager.markItemRead(PlaybackService.this, media.getItem(), true,
-					true);
-			FeedItem nextItem = manager
-					.getQueueSuccessorOfItem(media.getItem());
-			boolean isInQueue = manager.isInQueue(media.getItem());
-			if (isInQueue) {
-				manager.removeQueueItem(PlaybackService.this, media.getItem());
-			}
-			manager.addItemToPlaybackHistory(PlaybackService.this,
-					media.getItem());
-			manager.setFeedMedia(PlaybackService.this, media);
-
-			long autoDeleteMediaId = media.getId();
-
-			if (shouldStream) {
-				autoDeleteMediaId = -1;
-			}
-			SharedPreferences.Editor editor = prefs.edit();
-			editor.putLong(PREF_CURRENTLY_PLAYING_MEDIA, NO_MEDIA_PLAYING);
-			editor.putLong(PREF_AUTODELETE_MEDIA_ID, autoDeleteMediaId);
-			editor.putBoolean(PREF_AUTO_DELETE_MEDIA_PLAYBACK_COMPLETED, true);
-			editor.commit();
-
-			// Prepare for playing next item
-			boolean followQueue = prefs.getBoolean(
-					PodcastApp.PREF_FOLLOW_QUEUE, false);
-			boolean playNextItem = isInQueue && followQueue && nextItem != null;
-			if (playNextItem) {
-				if (AppConfig.DEBUG)
-					Log.d(TAG, "Loading next item in queue");
-				media = nextItem.getMedia();
-				feed = nextItem.getFeed();
-				shouldStream = !media.isDownloaded();
-				prepareImmediately = startWhenPrepared = true;
-			} else {
-				if (AppConfig.DEBUG)
-					Log.d(TAG,
-							"No more episodes available to play; Reloading current episode");
-				prepareImmediately = startWhenPrepared = false;
-				stopForeground(true);
-				stopWidgetUpdater();
-			}
-			int notificationCode = 0;
-			if (media.getMediaType() == MediaType.AUDIO) {
-				notificationCode = EXTRA_CODE_AUDIO;
-				playingVideo = false;
-			} else if (media.getMediaType() == MediaType.VIDEO) {
-				notificationCode = EXTRA_CODE_VIDEO;
-			}
-			resetVideoSurface();
-			refreshRemoteControlClientState();
-			sendNotificationBroadcast(NOTIFICATION_TYPE_RELOAD,
-					notificationCode);
+			endPlayback(true);
 		}
 	};
 
@@ -757,6 +683,82 @@ public class PlaybackService extends Service {
 
 		}
 	};
+
+	private void endPlayback(boolean playNextEpisode) {
+		if (AppConfig.DEBUG)
+			Log.d(TAG, "Playback ended");
+		audioManager.abandonAudioFocus(audioFocusChangeListener);
+
+		// Save state
+		cancelPositionSaver();
+
+		boolean isInQueue = false;
+		FeedItem nextItem = null;
+
+		if (media instanceof FeedMedia) {
+			FeedItem item = ((FeedMedia) media).getItem();
+			((FeedMedia) media).setPlaybackCompletionDate(new Date());
+			manager.markItemRead(PlaybackService.this, item, true, true);
+			nextItem = manager.getQueueSuccessorOfItem(item);
+			isInQueue = media instanceof FeedMedia
+					&& manager.isInQueue(((FeedMedia) media).getItem());
+			if (isInQueue) {
+				manager.removeQueueItem(PlaybackService.this, item);
+			}
+			manager.addItemToPlaybackHistory(PlaybackService.this, item);
+			manager.setFeedMedia(PlaybackService.this, (FeedMedia) media);
+			long autoDeleteMediaId = ((FeedComponent) media).getId();
+			if (shouldStream) {
+				autoDeleteMediaId = -1;
+			}
+		}
+
+		// Load next episode if previous episode was in the queue and if there
+		// is an episode in the queue left.
+		// Start playback immediately if continuous playback is enabled
+		boolean loadNextItem = isInQueue && nextItem != null;
+		playNextEpisode = playNextEpisode && loadNextItem
+				&& UserPreferences.isFollowQueue();
+		if (loadNextItem) {
+			if (AppConfig.DEBUG)
+				Log.d(TAG, "Loading next item in queue");
+			media = nextItem.getMedia();
+		}
+
+		if (playNextEpisode) {
+			if (AppConfig.DEBUG)
+				Log.d(TAG, "Playback of next episode will start immediately.");
+			prepareImmediately = startWhenPrepared = true;
+		} else {
+			if (AppConfig.DEBUG)
+				Log.d(TAG, "No more episodes available to play");
+			media = null;
+			prepareImmediately = startWhenPrepared = false;
+			stopForeground(true);
+			stopWidgetUpdater();
+		}
+
+		int notificationCode = 0;
+		if (media != null) {
+			shouldStream = !media.localFileAvailable();
+			if (media.getMediaType() == MediaType.AUDIO) {
+				notificationCode = EXTRA_CODE_AUDIO;
+				playingVideo = false;
+			} else if (media.getMediaType() == MediaType.VIDEO) {
+				notificationCode = EXTRA_CODE_VIDEO;
+			}
+		}
+		writePlaybackPreferences();
+		if (media != null) {
+			resetVideoSurface();
+			refreshRemoteControlClientState();
+			sendNotificationBroadcast(NOTIFICATION_TYPE_RELOAD,
+					notificationCode);
+		} else {
+			sendNotificationBroadcast(NOTIFICATION_TYPE_PLAYBACK_END, 0);
+			stopSelf();
+		}
+	}
 
 	public void setSleepTimer(long waitingTime) {
 		if (AppConfig.DEBUG)
@@ -814,8 +816,12 @@ public class PlaybackService extends Service {
 	public void stop() {
 		if (AppConfig.DEBUG)
 			Log.d(TAG, "Stopping playback");
-		player.stop();
-		setCurrentlyPlayingMedia(NO_MEDIA_PLAYING);
+		if (status == PlayerStatus.PREPARED || status == PlayerStatus.PAUSED
+				|| status == PlayerStatus.STOPPED
+				|| status == PlayerStatus.PLAYING) {
+			player.stop();
+		}
+		setCurrentlyPlayingMedia(PlaybackPreferences.NO_MEDIA_PLAYING);
 		stopSelf();
 	}
 
@@ -853,15 +859,8 @@ public class PlaybackService extends Service {
 					Log.d(TAG, "Audiofocus successfully requested");
 				if (AppConfig.DEBUG)
 					Log.d(TAG, "Resuming/Starting playback");
-				SharedPreferences.Editor editor = PreferenceManager
-						.getDefaultSharedPreferences(getApplicationContext())
-						.edit();
-				editor.putLong(PREF_CURRENTLY_PLAYING_MEDIA, media.getId());
-				editor.putLong(PREF_LAST_PLAYED_FEED_ID, feed.getId());
-				editor.putBoolean(PREF_LAST_IS_STREAM, shouldStream);
-				editor.putBoolean(PREF_LAST_IS_VIDEO, playingVideo);
-				editor.commit();
-				setLastPlayedMediaId(media.getId());
+				writePlaybackPreferences();
+
 				player.start();
 				if (status != PlayerStatus.PAUSED) {
 					player.seekTo((int) media.getPosition());
@@ -877,14 +876,57 @@ public class PlaybackService extends Service {
 				}
 				audioManager
 						.registerMediaButtonEventReceiver(mediaButtonReceiver);
-				if (media.getItem().isRead() == false) {
-					manager.markItemRead(this, media.getItem(), true, false);
-				}
+				media.onPlaybackStart();
 			} else {
 				if (AppConfig.DEBUG)
 					Log.d(TAG, "Failed to request Audiofocus");
 			}
 		}
+	}
+
+	private void writePlaybackPreferences() {
+		if (AppConfig.DEBUG)
+			Log.d(TAG, "Writing playback preferences");
+
+		SharedPreferences.Editor editor = PreferenceManager
+				.getDefaultSharedPreferences(getApplicationContext()).edit();
+		if (media != null) {
+			editor.putLong(PlaybackPreferences.PREF_CURRENTLY_PLAYING_MEDIA,
+					media.getPlayableType());
+			editor.putBoolean(
+					PlaybackPreferences.PREF_CURRENT_EPISODE_IS_STREAM,
+					shouldStream);
+			editor.putBoolean(
+					PlaybackPreferences.PREF_CURRENT_EPISODE_IS_VIDEO,
+					playingVideo);
+			if (media instanceof FeedMedia) {
+				FeedMedia fMedia = (FeedMedia) media;
+				editor.putLong(
+						PlaybackPreferences.PREF_CURRENTLY_PLAYING_FEED_ID,
+						fMedia.getItem().getFeed().getId());
+				editor.putLong(
+						PlaybackPreferences.PREF_CURRENTLY_PLAYING_FEEDMEDIA_ID,
+						fMedia.getId());
+			} else {
+				editor.putLong(
+						PlaybackPreferences.PREF_CURRENTLY_PLAYING_FEED_ID,
+						PlaybackPreferences.NO_MEDIA_PLAYING);
+				editor.putLong(
+						PlaybackPreferences.PREF_CURRENTLY_PLAYING_FEEDMEDIA_ID,
+						PlaybackPreferences.NO_MEDIA_PLAYING);
+			}
+			media.writeToPreferences(editor);
+		} else {
+			editor.putLong(PlaybackPreferences.PREF_CURRENTLY_PLAYING_MEDIA,
+					PlaybackPreferences.NO_MEDIA_PLAYING);
+			editor.putLong(PlaybackPreferences.PREF_CURRENTLY_PLAYING_FEED_ID,
+					PlaybackPreferences.NO_MEDIA_PLAYING);
+			editor.putLong(
+					PlaybackPreferences.PREF_CURRENTLY_PLAYING_FEEDMEDIA_ID,
+					PlaybackPreferences.NO_MEDIA_PLAYING);
+		}
+
+		editor.commit();
 	}
 
 	private void setStatus(PlayerStatus newStatus) {
@@ -917,28 +959,28 @@ public class PlaybackService extends Service {
 
 		Bitmap icon = null;
 		if (android.os.Build.VERSION.SDK_INT >= 11) {
-			if (media != null && media.getImage() != null
-					&& media.getImage().getFile_url() != null) {
+			if (media != null && media != null) {
 				int iconSize = getResources().getDimensionPixelSize(
 						android.R.dimen.notification_large_icon_width);
-				icon = BitmapDecoder.decodeBitmap(iconSize, media.getImage()
-						.getFile_url());
+				icon = BitmapDecoder.decodeBitmapFromWorkerTaskResource(iconSize, media);
 			}
+
 		}
 		if (icon == null) {
 			icon = BitmapFactory.decodeResource(getResources(),
 					R.drawable.ic_stat_antenna);
 		}
 
-		String contentText = media.getItem().getFeed().getTitle();
-		String contentTitle = media.getItem().getTitle();
+		String contentText = media.getFeedTitle();
+		String contentTitle = media.getEpisodeTitle();
 		Notification notification = null;
 		if (android.os.Build.VERSION.SDK_INT >= 16) {
 			Intent pauseButtonIntent = new Intent(this, PlaybackService.class);
 			pauseButtonIntent.putExtra(MediaButtonReceiver.EXTRA_KEYCODE,
 					KeyEvent.KEYCODE_MEDIA_PAUSE);
-			PendingIntent pauseButtonPendingIntent = PendingIntent
-					.getService(this, 0, pauseButtonIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+			PendingIntent pauseButtonPendingIntent = PendingIntent.getService(
+					this, 0, pauseButtonIntent,
+					PendingIntent.FLAG_UPDATE_CURRENT);
 			Notification.Builder notificationBuilder = new Notification.Builder(
 					this)
 					.setContentTitle(contentTitle)
@@ -979,7 +1021,9 @@ public class PlaybackService extends Service {
 
 	public void seek(int i) {
 		saveCurrentPosition();
-		if (status == PlayerStatus.INITIALIZED) {
+		if (status == PlayerStatus.INITIALIZED
+				|| status == PlayerStatus.INITIALIZING
+				|| status == PlayerStatus.PREPARING) {
 			media.setPosition(i);
 			setStartWhenPrepared(true);
 			prepare();
@@ -1006,8 +1050,9 @@ public class PlaybackService extends Service {
 		if (position != INVALID_TIME) {
 			if (AppConfig.DEBUG)
 				Log.d(TAG, "Saving current position to " + position);
-			media.setPosition(position);
-			manager.setFeedMedia(this, media);
+			media.saveCurrentPosition(PreferenceManager
+					.getDefaultSharedPreferences(getApplicationContext()),
+					position);
 		}
 	}
 
@@ -1101,10 +1146,10 @@ public class PlaybackService extends Service {
 					MetadataEditor editor = remoteControlClient
 							.editMetadata(false);
 					editor.putString(MediaMetadataRetriever.METADATA_KEY_TITLE,
-							media.getItem().getTitle());
+							media.getEpisodeTitle());
 
 					editor.putString(MediaMetadataRetriever.METADATA_KEY_ALBUM,
-							media.getItem().getFeed().getTitle());
+							media.getFeedTitle());
 
 					editor.apply();
 				}
@@ -1155,10 +1200,8 @@ public class PlaybackService extends Service {
 
 	/** Pauses playback if PREF_PAUSE_ON_HEADSET_DISCONNECT was set to true. */
 	private void pauseIfPauseOnDisconnect() {
-		boolean pauseOnDisconnect = PreferenceManager
-				.getDefaultSharedPreferences(getApplicationContext())
-				.getBoolean(PodcastApp.PREF_PAUSE_ON_HEADSET_DISCONNECT, false);
-		if (pauseOnDisconnect && status == PlayerStatus.PLAYING) {
+		if (UserPreferences.isPauseOnHeadsetDisconnect()
+				&& status == PlayerStatus.PLAYING) {
 			pause(true, true);
 		}
 	}
@@ -1169,15 +1212,27 @@ public class PlaybackService extends Service {
 		public void onReceive(Context context, Intent intent) {
 			if (intent.getAction().equals(ACTION_SHUTDOWN_PLAYBACK_SERVICE)) {
 				schedExecutor.shutdownNow();
-				if (chapterLoader != null) {
-					chapterLoader.interrupt();
-				}
 				stop();
 				media = null;
-				feed = null;
 			}
 		}
 
+	};
+
+	private BroadcastReceiver skipCurrentEpisodeReceiver = new BroadcastReceiver() {
+		@Override
+		public void onReceive(Context context, Intent intent) {
+			if (intent.getAction().equals(ACTION_SKIP_CURRENT_EPISODE)) {
+
+				if (AppConfig.DEBUG)
+					Log.d(TAG, "Received SKIP_CURRENT_EPISODE intent");
+				if (media != null) {
+					setStatus(PlayerStatus.STOPPED);
+					player.reset();
+					endPlayback(false);
+				}
+			}
+		}
 	};
 
 	/** Periodically saves the position of the media file */
@@ -1276,7 +1331,7 @@ public class PlaybackService extends Service {
 		return status;
 	}
 
-	public FeedMedia getMedia() {
+	public Playable getMedia() {
 		return media;
 	}
 
@@ -1343,7 +1398,40 @@ public class PlaybackService extends Service {
 	private void setCurrentlyPlayingMedia(long id) {
 		SharedPreferences.Editor editor = PreferenceManager
 				.getDefaultSharedPreferences(getApplicationContext()).edit();
-		editor.putLong(PREF_CURRENTLY_PLAYING_MEDIA, id);
+		editor.putLong(PlaybackPreferences.PREF_CURRENTLY_PLAYING_MEDIA, id);
 		editor.commit();
+	}
+
+	private static class InitTask extends AsyncTask<Playable, Void, Playable> {
+		private Playable playable;
+		public PlayableException exception;
+
+		@Override
+		protected Playable doInBackground(Playable... params) {
+			if (params[0] == null) {
+				throw new IllegalArgumentException("Playable must not be null");
+			}
+			playable = params[0];
+
+			try {
+				playable.loadMetadata();
+			} catch (PlayableException e) {
+				e.printStackTrace();
+				exception = e;
+				return null;
+			}
+			return playable;
+		}
+
+		@SuppressLint("NewApi")
+		public void executeAsync(Playable playable) {
+			FlattrUtils.hasToken();
+			if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.GINGERBREAD_MR1) {
+				executeOnExecutor(THREAD_POOL_EXECUTOR, playable);
+			} else {
+				execute(playable);
+			}
+		}
+
 	}
 }

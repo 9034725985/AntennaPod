@@ -6,6 +6,7 @@
   <string name="podcasts_label">PODCASTS</string>
   <string name="episodes_label">EPISODIOS</string>
   <string name="new_label">Nuevos</string>
+  <string name="waiting_list_label">Lista de espera</string>
   <string name="settings_label">Ajustes</string>
   <string name="add_new_feed_label">Añadir un canal</string>
   <string name="downloads_label">Descargas</string>
@@ -53,7 +54,7 @@
   <string name="download_label">Descargar</string>
   <string name="play_label">Reproducir</string>
   <string name="pause_label">Pausar</string>
-  <string name="stream_label">Transmitir</string>
+  <string name="stream_label">Reproducir por streaming</string>
   <string name="remove_label">Quitar</string>
   <string name="mark_read_label">Marcar como leído</string>
   <string name="mark_unread_label">Marcar como no leído</string>
@@ -63,6 +64,7 @@
   <string name="support_label">Añadir a Flattr</string>
   <string name="enqueue_all_new">Ponerlos todos en cola</string>
   <string name="download_all">Descargarlos todos</string>
+  <string name="skip_episode_label">Saltar episodio</string>
   <!--Download messages and labels-->
   <string name="download_successful">Descarga exitosa</string>
   <string name="download_failed">Descarga errónea</string>
@@ -152,15 +154,16 @@
   <string name="pref_flattr_this_app_sum">Apoye el desarrollo de AntennaPod valorándola en Flattr. ¡Gracias!</string>
   <string name="pref_revokeAccess_title">Revocar el acceso</string>
   <string name="pref_revokeAccess_sum">Rescindir el permiso de acceso de esta aplicación a su cuenta de Flattr.</string>
-  <string name="pref_autoQueue_title">Poner en cola automáticamente</string>
-  <string name="pref_autoQueue_sum">Añadir un episodio a la cola al comenzar a descargarlo.</string>
   <string name="pref_display_only_episodes_title">Mostrar solo episodios</string>
   <string name="pref_display_only_episodes_sum">Mostrar solo elementos que contengan un episodio.</string>
   <string name="user_interface_label">Interfaz de usuario</string>
-  <string name="pref_auto_delete_title">Eliminar automáticamente</string>
-  <string name="pref_auto_delete_sum">Borrar un episodio al completar su reproducción o eliminarlo de la cola</string>
   <string name="pref_set_theme_title">Elegir un tema</string>
   <string name="pref_set_theme_sum">Cambiar la apariencia de AntennaPod.</string>
+  <string name="pref_automatic_download_title">Descarga automática</string>
+  <string name="pref_automatic_download_sum">Configurar la descarga automática de episodios.</string>
+  <string name="pref_autodl_wifi_filter_title">Activar el filtro WiFi</string>
+  <string name="pref_autodl_wifi_filter_sum">Permitir la descarga automática sólo para las redes WiFi marcadas.</string>
+  <string name="pref_episode_cache_title">Caché de episodios</string>
   <!--Search-->
   <string name="search_hint">Buscar canales o episodios</string>
   <string name="found_in_shownotes_label">Encontrado en las notas del programa</string>
