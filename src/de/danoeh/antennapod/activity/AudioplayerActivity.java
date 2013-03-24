@@ -20,13 +20,15 @@ import com.actionbarsherlock.view.Window;
 import de.danoeh.antennapod.AppConfig;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.adapter.ChapterListAdapter;
-import de.danoeh.antennapod.asynctask.FeedImageLoader;
+import de.danoeh.antennapod.asynctask.ImageLoader;
 import de.danoeh.antennapod.feed.Chapter;
-import de.danoeh.antennapod.feed.FeedMedia;
+import de.danoeh.antennapod.feed.MediaType;
 import de.danoeh.antennapod.feed.SimpleChapter;
 import de.danoeh.antennapod.fragment.CoverFragment;
 import de.danoeh.antennapod.fragment.ItemDescriptionFragment;
 import de.danoeh.antennapod.service.PlaybackService;
+import de.danoeh.antennapod.util.playback.ExternalMedia;
+import de.danoeh.antennapod.util.playback.Playable;
 
 /** Activity for playing audio files. */
 public class AudioplayerActivity extends MediaplayerActivity {
@@ -71,7 +73,36 @@ public class AudioplayerActivity extends MediaplayerActivity {
 	protected void onCreate(Bundle savedInstanceState) {
 		requestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
 		super.onCreate(savedInstanceState);
+		getSupportActionBar().setDisplayShowTitleEnabled(false);
 		detachedFragments = new Fragment[NUM_CONTENT_FRAGMENTS];
+	}
+
+	@Override
+	protected void onResume() {
+		super.onResume();
+		if (getIntent().getAction() != null
+				&& getIntent().getAction().equals(Intent.ACTION_VIEW)) {
+			Intent intent = getIntent();
+			if (AppConfig.DEBUG)
+				Log.d(TAG, "Received VIEW intent: "
+						+ intent.getData().getPath());
+			ExternalMedia media = new ExternalMedia(intent.getData().getPath(),
+					MediaType.AUDIO);
+			Intent launchIntent = new Intent(this, PlaybackService.class);
+			launchIntent.putExtra(PlaybackService.EXTRA_PLAYABLE, media);
+			launchIntent.putExtra(PlaybackService.EXTRA_START_WHEN_PREPARED,
+					true);
+			launchIntent.putExtra(PlaybackService.EXTRA_SHOULD_STREAM, false);
+			launchIntent.putExtra(PlaybackService.EXTRA_PREPARE_IMMEDIATELY,
+					true);
+			startService(launchIntent);
+		}
+	}
+
+	@Override
+	protected void onNewIntent(Intent intent) {
+		super.onNewIntent(intent);
+		setIntent(intent);
 	}
 
 	@Override
@@ -101,7 +132,7 @@ public class AudioplayerActivity extends MediaplayerActivity {
 		if (AppConfig.DEBUG)
 			Log.d(TAG, "Switching contentView to position " + pos);
 		if (currentlyShownPosition != pos) {
-			FeedMedia media = controller.getMedia();
+			Playable media = controller.getMedia();
 			if (media != null) {
 				FragmentTransaction ft = getSupportFragmentManager()
 						.beginTransaction();
@@ -113,15 +144,14 @@ public class AudioplayerActivity extends MediaplayerActivity {
 				case POS_COVER:
 					if (coverFragment == null) {
 						Log.i(TAG, "Using new coverfragment");
-						coverFragment = CoverFragment.newInstance(media
-								.getItem());
+						coverFragment = CoverFragment.newInstance(media);
 					}
 					currentlyShownFragment = coverFragment;
 					break;
 				case POS_DESCR:
 					if (descriptionFragment == null) {
 						descriptionFragment = ItemDescriptionFragment
-								.newInstance(media.getItem());
+								.newInstance(media);
 					}
 					currentlyShownFragment = descriptionFragment;
 					break;
@@ -140,7 +170,7 @@ public class AudioplayerActivity extends MediaplayerActivity {
 
 						};
 						chapterFragment.setListAdapter(new ChapterListAdapter(
-								AudioplayerActivity.this, 0, media.getItem()
+								AudioplayerActivity.this, 0, media
 										.getChapters(), media));
 					}
 					currentlyShownFragment = chapterFragment;
@@ -167,7 +197,7 @@ public class AudioplayerActivity extends MediaplayerActivity {
 	private void updateNavButtonDrawable() {
 		TypedArray drawables = obtainStyledAttributes(new int[] {
 				R.attr.navigation_shownotes, R.attr.navigation_chapters });
-		final FeedMedia media = controller.getMedia();
+		final Playable media = controller.getMedia();
 		if (butNavLeft != null && butNavRight != null && media != null) {
 			switch (currentlyShownPosition) {
 			case POS_COVER:
@@ -181,9 +211,8 @@ public class AudioplayerActivity extends MediaplayerActivity {
 
 					@Override
 					public void run() {
-						FeedImageLoader.getInstance().loadThumbnailBitmap(
-								media.getItem().getFeed().getImage(),
-								butNavLeft);
+						ImageLoader.getInstance().loadThumbnailBitmap(
+								media, butNavLeft);
 					}
 				});
 				butNavRight.setImageDrawable(drawables.getDrawable(1));
@@ -194,9 +223,8 @@ public class AudioplayerActivity extends MediaplayerActivity {
 
 					@Override
 					public void run() {
-						FeedImageLoader.getInstance().loadThumbnailBitmap(
-								media.getItem().getFeed().getImage(),
-								butNavLeft);
+						ImageLoader.getInstance().loadThumbnailBitmap(
+								media, butNavLeft);
 					}
 				});
 				butNavRight.setImageDrawable(drawables.getDrawable(0));
@@ -251,11 +279,11 @@ public class AudioplayerActivity extends MediaplayerActivity {
 	@Override
 	protected void loadMediaInfo() {
 		super.loadMediaInfo();
-		final FeedMedia media = controller.getMedia();
+		final Playable media = controller.getMedia();
 		if (media != null) {
-			txtvTitle.setText(media.getItem().getTitle());
-			txtvFeed.setText(media.getItem().getFeed().getTitle());
-			if (media.getItem().getChapters() != null) {
+			txtvTitle.setText(media.getEpisodeTitle());
+			txtvFeed.setText(media.getFeedTitle());
+			if (media.getChapters() != null) {
 				butNavRight.setVisibility(View.VISIBLE);
 			} else {
 				butNavRight.setVisibility(View.GONE);
@@ -302,7 +330,7 @@ public class AudioplayerActivity extends MediaplayerActivity {
 	}
 
 	public interface AudioplayerContentFragment {
-		public void onDataSetChanged(FeedMedia media);
+		public void onDataSetChanged(Playable media);
 	}
 
 }

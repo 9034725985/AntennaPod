@@ -1,4 +1,4 @@
-package de.danoeh.antennapod.util;
+package de.danoeh.antennapod.util.playback;
 
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledFuture;
@@ -30,8 +30,11 @@ import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.feed.Chapter;
 import de.danoeh.antennapod.feed.FeedManager;
 import de.danoeh.antennapod.feed.FeedMedia;
+import de.danoeh.antennapod.preferences.PlaybackPreferences;
 import de.danoeh.antennapod.service.PlaybackService;
 import de.danoeh.antennapod.service.PlayerStatus;
+import de.danoeh.antennapod.util.Converter;
+import de.danoeh.antennapod.util.playback.Playable.PlayableUtils;
 
 /**
  * Communicates with the playback service. GUI classes should use this class to
@@ -46,7 +49,7 @@ public abstract class PlaybackController {
 	private Activity activity;
 
 	private PlaybackService playbackService;
-	private FeedMedia media;
+	private Playable media;
 	private PlayerStatus status;
 
 	private ScheduledThreadPoolExecutor schedExecutor;
@@ -92,6 +95,15 @@ public abstract class PlaybackController {
 	 * activity's onResume() method.
 	 */
 	public void init() {
+		activity.registerReceiver(statusUpdate, new IntentFilter(
+				PlaybackService.ACTION_PLAYER_STATUS_CHANGED));
+
+		activity.registerReceiver(notificationReceiver, new IntentFilter(
+				PlaybackService.ACTION_PLAYER_NOTIFICATION));
+
+		activity.registerReceiver(shutdownReceiver, new IntentFilter(
+				PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE));
+
 		if (!released) {
 			bindToService();
 		} else {
@@ -185,26 +197,25 @@ public abstract class PlaybackController {
 			Log.d(TAG, "Trying to restore last played media");
 		SharedPreferences prefs = PreferenceManager
 				.getDefaultSharedPreferences(activity.getApplicationContext());
-		long mediaId = prefs.getLong(PlaybackService.PREF_LAST_PLAYED_ID, -1);
-		long feedId = prefs.getLong(PlaybackService.PREF_LAST_PLAYED_FEED_ID,
-				-1);
-		if (mediaId != -1 && feedId != -1) {
-			FeedMedia media = FeedManager.getInstance().getFeedMedia(mediaId);
+		long currentlyPlayingMedia = PlaybackPreferences
+				.getCurrentlyPlayingMedia();
+		if (currentlyPlayingMedia != PlaybackPreferences.NO_MEDIA_PLAYING) {
+			Playable media = PlayableUtils.createInstanceFromPreferences(
+					(int) currentlyPlayingMedia, prefs);
 			if (media != null) {
 				Intent serviceIntent = new Intent(activity,
 						PlaybackService.class);
-				serviceIntent.putExtra(PlaybackService.EXTRA_FEED_ID, feedId);
-				serviceIntent.putExtra(PlaybackService.EXTRA_MEDIA_ID, mediaId);
+				serviceIntent.putExtra(PlaybackService.EXTRA_PLAYABLE, media);
 				serviceIntent.putExtra(
 						PlaybackService.EXTRA_START_WHEN_PREPARED, false);
 				serviceIntent.putExtra(
 						PlaybackService.EXTRA_PREPARE_IMMEDIATELY, false);
-				boolean fileExists = media.fileExists();
-				boolean lastIsStream = prefs.getBoolean(
-						PlaybackService.PREF_LAST_IS_STREAM, true);
-				if (!fileExists && !lastIsStream) {
+				boolean fileExists = media.localFileAvailable();
+				boolean lastIsStream = PlaybackPreferences
+						.getCurrentEpisodeIsStream();
+				if (!fileExists && !lastIsStream && media instanceof FeedMedia) {
 					FeedManager.getInstance().notifyMissingFeedMediaFile(
-							activity, media);
+							activity, (FeedMedia) media);
 				}
 				serviceIntent.putExtra(PlaybackService.EXTRA_SHOULD_STREAM,
 						lastIsStream || !fileExists);
@@ -249,15 +260,6 @@ public abstract class PlaybackController {
 			playbackService = ((PlaybackService.LocalBinder) service)
 					.getService();
 
-			activity.registerReceiver(statusUpdate, new IntentFilter(
-					PlaybackService.ACTION_PLAYER_STATUS_CHANGED));
-
-			activity.registerReceiver(notificationReceiver, new IntentFilter(
-					PlaybackService.ACTION_PLAYER_NOTIFICATION));
-
-			activity.registerReceiver(shutdownReceiver, new IntentFilter(
-					PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE));
-
 			queryService();
 			if (AppConfig.DEBUG)
 				Log.d(TAG, "Connection to Service established");
@@ -277,12 +279,13 @@ public abstract class PlaybackController {
 		public void onReceive(Context context, Intent intent) {
 			if (AppConfig.DEBUG)
 				Log.d(TAG, "Received statusUpdate Intent.");
-			if (playbackService != null) {
+			if (isConnectedToPlaybackService()) {
 				status = playbackService.getStatus();
 				handleStatus();
 			} else {
 				Log.w(TAG,
 						"Couldn't receive status update: playbackService was null");
+				bindToService();
 			}
 		}
 	};
@@ -291,43 +294,49 @@ public abstract class PlaybackController {
 
 		@Override
 		public void onReceive(Context context, Intent intent) {
-			int type = intent.getIntExtra(
-					PlaybackService.EXTRA_NOTIFICATION_TYPE, -1);
-			int code = intent.getIntExtra(
-					PlaybackService.EXTRA_NOTIFICATION_CODE, -1);
-			if (code != -1 && type != -1) {
-				switch (type) {
-				case PlaybackService.NOTIFICATION_TYPE_ERROR:
-					handleError(code);
-					break;
-				case PlaybackService.NOTIFICATION_TYPE_BUFFER_UPDATE:
-					float progress = ((float) code) / 100;
-					onBufferUpdate(progress);
-					break;
-				case PlaybackService.NOTIFICATION_TYPE_RELOAD:
-					cancelPositionObserver();
-					mediaInfoLoaded = false;
-					onReloadNotification(intent.getIntExtra(
-							PlaybackService.EXTRA_NOTIFICATION_CODE, -1));
-					queryService();
+			if (isConnectedToPlaybackService()) {
+				int type = intent.getIntExtra(
+						PlaybackService.EXTRA_NOTIFICATION_TYPE, -1);
+				int code = intent.getIntExtra(
+						PlaybackService.EXTRA_NOTIFICATION_CODE, -1);
+				if (code != -1 && type != -1) {
+					switch (type) {
+					case PlaybackService.NOTIFICATION_TYPE_ERROR:
+						handleError(code);
+						break;
+					case PlaybackService.NOTIFICATION_TYPE_BUFFER_UPDATE:
+						float progress = ((float) code) / 100;
+						onBufferUpdate(progress);
+						break;
+					case PlaybackService.NOTIFICATION_TYPE_RELOAD:
+						cancelPositionObserver();
+						mediaInfoLoaded = false;
+						onReloadNotification(intent.getIntExtra(
+								PlaybackService.EXTRA_NOTIFICATION_CODE, -1));
+						queryService();
 
-					break;
-				case PlaybackService.NOTIFICATION_TYPE_SLEEPTIMER_UPDATE:
-					onSleepTimerUpdate();
-					break;
-				case PlaybackService.NOTIFICATION_TYPE_BUFFER_START:
-					onBufferStart();
-					break;
-				case PlaybackService.NOTIFICATION_TYPE_BUFFER_END:
-					onBufferEnd();
-					break;
+						break;
+					case PlaybackService.NOTIFICATION_TYPE_SLEEPTIMER_UPDATE:
+						onSleepTimerUpdate();
+						break;
+					case PlaybackService.NOTIFICATION_TYPE_BUFFER_START:
+						onBufferStart();
+						break;
+					case PlaybackService.NOTIFICATION_TYPE_BUFFER_END:
+						onBufferEnd();
+						break;
+					case PlaybackService.NOTIFICATION_TYPE_PLAYBACK_END:
+						onPlaybackEnd();
+						break;
+					}
+
+				} else {
+					if (AppConfig.DEBUG)
+						Log.d(TAG, "Bad arguments. Won't handle intent");
 				}
-
 			} else {
-				if (AppConfig.DEBUG)
-					Log.d(TAG, "Bad arguments. Won't handle intent");
+				bindToService();
 			}
-
 		}
 
 	};
@@ -336,10 +345,12 @@ public abstract class PlaybackController {
 
 		@Override
 		public void onReceive(Context context, Intent intent) {
-			if (intent.getAction().equals(
-					PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE)) {
-				release();
-				onShutdownNotification();
+			if (isConnectedToPlaybackService()) {
+				if (intent.getAction().equals(
+						PlaybackService.ACTION_SHUTDOWN_PLAYBACK_SERVICE)) {
+					release();
+					onShutdownNotification();
+				}
 			}
 		}
 	};
@@ -358,6 +369,8 @@ public abstract class PlaybackController {
 	public abstract void onSleepTimerUpdate();
 
 	public abstract void handleError(int code);
+
+	public abstract void onPlaybackEnd();
 
 	/**
 	 * Is called whenever the PlaybackService changes it's status. This method
@@ -586,7 +599,7 @@ public abstract class PlaybackController {
 		}
 	}
 
-	public FeedMedia getMedia() {
+	public Playable getMedia() {
 		return media;
 	}
 
@@ -639,6 +652,14 @@ public abstract class PlaybackController {
 			return PlaybackService.isPlayingVideo();
 		}
 		return false;
+	}
+
+	/**
+	 * Returns true if PlaybackController can communicate with the playback
+	 * service.
+	 */
+	public boolean isConnectedToPlaybackService() {
+		return playbackService != null;
 	}
 
 	public void notifyVideoSurfaceAbandoned() {

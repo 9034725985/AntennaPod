@@ -16,6 +16,8 @@ import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.params.HttpClientParams;
+import org.apache.http.impl.client.AbstractHttpClient;
+import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.params.HttpConnectionParams;
 import org.apache.http.params.HttpParams;
 
@@ -42,8 +44,8 @@ public class HttpDownloader extends Downloader {
 		super(downloaderCallback, status);
 	}
 
-	private AndroidHttpClient createHttpClient() {
-		AndroidHttpClient httpClient = AndroidHttpClient.newInstance("");
+	private DefaultHttpClient createHttpClient() {
+		DefaultHttpClient httpClient = new DefaultHttpClient();
 		HttpParams params = httpClient.getParams();
 		params.setIntParameter("http.protocol.max-redirects", MAX_REDIRECTS);
 		params.setBooleanParameter("http.protocol.reject-relative-redirect",
@@ -51,12 +53,16 @@ public class HttpDownloader extends Downloader {
 		HttpConnectionParams.setSoTimeout(params, SOCKET_TIMEOUT);
 		HttpConnectionParams.setConnectionTimeout(params, CONNECTION_TIMEOUT);
 		HttpClientParams.setRedirecting(params, true);
+
+		// Workaround for broken URLs in redirection
+		((AbstractHttpClient) httpClient)
+				.setRedirectHandler(new APRedirectHandler());
 		return httpClient;
 	}
 
 	@Override
 	protected void download() {
-		AndroidHttpClient httpClient = null;
+		DefaultHttpClient httpClient = null;
 		OutputStream out = null;
 		InputStream connection = null;
 		try {
@@ -73,7 +79,8 @@ public class HttpDownloader extends Downloader {
 					File destination = new File(status.getFeedFile()
 							.getFile_url());
 					if (!destination.exists()) {
-						connection = AndroidHttpClient.getUngzippedContent(httpEntity);
+						connection = AndroidHttpClient
+								.getUngzippedContent(httpEntity);
 						InputStream in = new BufferedInputStream(connection);
 						out = new BufferedOutputStream(new FileOutputStream(
 								destination));
@@ -143,7 +150,7 @@ public class HttpDownloader extends Downloader {
 			IOUtils.closeQuietly(connection);
 			IOUtils.closeQuietly(out);
 			if (httpClient != null) {
-				httpClient.close();
+				httpClient.getConnectionManager().shutdown();
 			}
 		}
 	}
@@ -175,16 +182,20 @@ public class HttpDownloader extends Downloader {
 		status.setCancelled(true);
 		cleanup();
 	}
-	
+
 	/** Deletes unfinished downloads. */
 	private void cleanup() {
-		if (status != null && status.getFeedFile() != null && status.getFeedFile().getFile_url() != null) {
+		if (status != null && status.getFeedFile() != null
+				&& status.getFeedFile().getFile_url() != null) {
 			File dest = new File(status.getFeedFile().getFile_url());
 			if (dest.exists()) {
 				boolean rc = dest.delete();
-				if (AppConfig.DEBUG) Log.d(TAG, "Deleted file " + dest.getName() + "; Result: " + rc);
+				if (AppConfig.DEBUG)
+					Log.d(TAG, "Deleted file " + dest.getName() + "; Result: "
+							+ rc);
 			} else {
-				if (AppConfig.DEBUG) Log.d(TAG, "cleanup() didn't delete file: does not exist.");
+				if (AppConfig.DEBUG)
+					Log.d(TAG, "cleanup() didn't delete file: does not exist.");
 			}
 		}
 	}

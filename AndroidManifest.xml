@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="de.danoeh.antennapod"
-    android:versionCode="26"
-    android:versionName="0.9.7" >
+    android:versionCode="28"
+    android:versionName="0.9.7.1" >
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
@@ -23,6 +23,9 @@
     <uses-feature
         android:name="android.hardware.screen.portrait"
         android:required="false" />
+
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name="de.danoeh.antennapod.PodcastApp"
@@ -74,7 +77,17 @@
             android:name=".activity.AudioplayerActivity"
             android:configChanges="keyboardHidden|orientation"
             android:launchMode="singleTask"
-            android:screenOrientation="portrait" android:label=" "/>
+            android:screenOrientation="portrait" >
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="file" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+        </activity>
 
         <service
             android:name=".service.download.DownloadService"
@@ -316,6 +329,15 @@
             android:name=".activity.VideoplayerActivity"
             android:configChanges="keyboardHidden|orientation"
             android:screenOrientation="landscape" >
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="file" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
         </activity>
         <activity
             android:name=".activity.PlaybackHistoryActivity"
@@ -323,7 +345,28 @@
         <activity
             android:name=".activity.DirectoryChooserActivity"
             android:label="@string/choose_data_directory" />
-        <activity android:label="@string/organize_queue_label" android:name=".activity.OrganizeQueueActivity" android:configChanges="orientation"></activity>
+        <activity
+            android:name=".activity.OrganizeQueueActivity"
+            android:configChanges="orientation"
+            android:label="@string/organize_queue_label" >
+        </activity>
+
+        <receiver android:name=".receiver.ConnectivityActionReceiver" >
+            <intent-filter>
+                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
+            </intent-filter>
+        </receiver>
+        <receiver android:name=".receiver.AlarmUpdateReceiver" >
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <data
+                    android:path="de.danoeh.antennapod"
+                    android:scheme="package" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
