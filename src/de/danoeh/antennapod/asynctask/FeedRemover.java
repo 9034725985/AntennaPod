@@ -6,8 +6,11 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnCancelListener;
 import android.os.AsyncTask;
+import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.feed.Feed;
-import de.danoeh.antennapod.feed.FeedManager;
+import de.danoeh.antennapod.storage.DBWriter;
+
+import java.util.concurrent.ExecutionException;
 
 /** Removes a feed in the background. */
 public class FeedRemover extends AsyncTask<Void, Void, Void> {
@@ -23,9 +26,14 @@ public class FeedRemover extends AsyncTask<Void, Void, Void> {
 
 	@Override
 	protected Void doInBackground(Void... params) {
-		FeedManager manager = FeedManager.getInstance();
-		manager.deleteFeed(context, feed);
-		return null;
+        try {
+            DBWriter.deleteFeed(context, feed.getId()).get();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } catch (ExecutionException e) {
+            e.printStackTrace();
+        }
+        return null;
 	}
 
 	@Override
@@ -41,7 +49,7 @@ public class FeedRemover extends AsyncTask<Void, Void, Void> {
 	@Override
 	protected void onPreExecute() {
 		dialog = new ProgressDialog(context);
-		dialog.setMessage("Removing Feed");
+		dialog.setMessage(context.getString(R.string.feed_remover_msg));
 		dialog.setOnCancelListener(new OnCancelListener() {
 
 			@Override

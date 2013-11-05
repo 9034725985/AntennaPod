@@ -1,5 +1,46 @@
 Change Log
 ==========
+
+Version 0.9.8.0
+---------------
+* Added access to the gpodder.net directory
+* Added ability to sync podcast subscriptions with the gpodder.net service
+* Automatic download can now be turned on or off for specific podcasts
+* Added option to pause playback when another app is playing sounds
+* Added Dutch and Hindi translation
+* Resolved a problem with automatic podcast updates
+* Resolved a problem with the buttons' visibility in the episode screen
+* Resolved a problem where episodes would be re-downloaded unnecessarily
+* Several other bugfixes and usability improvements
+
+Version 0.9.7.5
+---------------
+* Reduced application startup time
+* Reduced memory usage
+* Added option to change the playback speed
+* Added Swedish translation
+* Several bugfixes and improvements
+
+Version 0.9.7.4
+---------------
+* Episode cache size can now be set to unlimited
+* Removing an episode in the queue via sliding can now be undone
+* Added support for Links in MP3 chapters
+* Added Czech(Czech Republic), Azerbaijani and Portuguese translations
+* Several bugfixes and improvements
+
+Version 0.9.7.3
+---------------
+* Bluetooth devices now display metadata during playback (requires AVRCP 1.3 or higher)
+* User interface improvements
+* Several bugfixes
+
+Version 0.9.7.2
+---------------
+* Automatic download can now be disabled
+* Added Italian (Italy) translation
+* Several bugfixes
+
 Version 0.9.7.1
 ---------------
 * Added automatic download of new episodes

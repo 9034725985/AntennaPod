@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
   <!--Activitiy titles-->
   <string name="app_name">AntennaPod</string>
   <string name="feeds_label">Feeds</string>
@@ -8,7 +8,6 @@
   <string name="new_label">Nye</string>
   <string name="waiting_list_label">Venteliste</string>
   <string name="settings_label">Indstillinger</string>
-  <string name="add_new_feed_label">Tilføj et nyt feed</string>
   <string name="downloads_label">Downloads</string>
   <string name="cancel_download_label">Annuller Download</string>
   <string name="download_log_label">Download log</string>
@@ -32,7 +31,7 @@
   <string name="external_storage_error_msg">Ingen ekstern harddisk er tilgængelig. Vær venlig at sørge for at den eksterne hukommelse er monteret så app\'en kan fungere korrekt.</string>
   <string name="chapters_label">Kapitler</string>
   <string name="shownotes_label">Afsnitsnoter</string>
-  <string name="last_update_prefix">Sidste opdateringer:\u0020</string>
+  <string name="most_recent_prefix">Seneste episoder:\u0020</string>
   <string name="episodes_suffix">\u0020episoder</string>
   <string name="published_prefix">Offentliggjort:\u0020</string>
   <string name="length_prefix">Længde:\u0020</string>
@@ -40,9 +39,9 @@
   <string name="processing_label">Behandler</string>
   <string name="loading_label">Indlæser...</string>
   <string name="image_of_prefix">Billede af:\u0020</string>
+  <string name="close_label">Luk</string>
   <!--'Add Feed' Activity labels-->
   <string name="feedurl_label">Feed URL</string>
-  <string name="txtvfeedurl_label">Indtast URL\'en for feedet her:</string>
   <!--Actions on feeds-->
   <string name="mark_all_read_label">Marker alle som læst</string>
   <string name="show_info_label">Vis information</string>
@@ -112,6 +111,8 @@
   <!--Queue operations-->
   <string name="clear_queue_label">Fjern kø</string>
   <string name="organize_queue_label">Arranger kø</string>
+  <string name="undo">Fortryd</string>
+  <string name="removed_from_queue">Emne slettet</string>
   <!--Flattr-->
   <string name="flattr_auth_label">Flattr log ind</string>
   <string name="flattr_auth_explanation">Tryk på knappen nedenfor for at starte godkendelsesprocessen. Du vil blive ført til flattr log ind siden i din browser og bedt om at give AntennaPod tilladelse til at flattr emner. Efter at du har givet tilladelsen vil du automatisk vende tilbage til denne side.</string>
@@ -127,6 +128,9 @@
   <string name="access_revoked_info">Du har succesfuldt tilbagekaldt AntennaPods adgangs polet til din konto. For at fuldføre processen skal du fjerne denne app fra listen af godkendte applikationer i din kontos indstillinger på flattr\'s hjemmeside.</string>
   <string name="flattr_click_success">Det er lykkedes at flattr dette emne!</string>
   <string name="flattring_label">Flattere</string>
+  <!--Variable Speed-->
+  <string name="download_plugin_label">Hent Plugin</string>
+  <string name="no_playback_plugin_title">Plugin er ikke installeret</string>
   <!--Empty list labels-->
   <string name="no_items_label">Der er ingen emner i denne liste.</string>
   <string name="no_feeds_label">Du har endnu ikke abonneret til nogle feeds.</string>
@@ -164,6 +168,12 @@
   <string name="pref_autodl_wifi_filter_title">Sæt Wi-Fi filter til</string>
   <string name="pref_autodl_wifi_filter_sum">Tillad kun automatisk download for de valgte Wi-Fi netværk</string>
   <string name="pref_episode_cache_title">Episode cache</string>
+  <string name="pref_theme_title_light">Lys</string>
+  <string name="pref_theme_title_dark">Mørk</string>
+  <string name="pref_episode_cache_unlimited">Uendelig</string>
+  <string name="pref_update_interval_hours_plural">timer</string>
+  <string name="pref_update_interval_hours_singular">time</string>
+  <string name="pref_update_interval_hours_manual">Manuelt</string>
   <!--Search-->
   <string name="search_hint">Søg efter feeds eller episoder</string>
   <string name="found_in_shownotes_label">Funder i showets noter</string>
@@ -175,7 +185,6 @@
   <string name="search_label">Søg</string>
   <string name="found_in_title_label">Fundet i titel</string>
   <!--OPML import and export-->
-  <string name="opml_import_txtv_button_lable">Du kan også importere en OPML fil. OPML filer muliggør at flytte dine podcasts fra en podcatcher til en anden:</string>
   <string name="opml_import_explanation">For at importere en OPML fil, skal du først placere den i følgende mappe og tryk på knappen nedenfor for at starte import-processen.</string>
   <string name="start_import_label">Start import</string>
   <string name="opml_import_label">OPML import</string>
@@ -206,8 +215,8 @@
   <string name="miro_search_hint">Søg i Miro Guiden</string>
   <string name="popular_label">Populær</string>
   <string name="best_rating_label">Bedste bedømmelse</string>
-  <string name="add_feed_label">Tilføj feed</string>
   <string name="miro_feed_added">Feedet bliver tilføjet</string>
+  <!--gpodder.net-->
   <!--Directory chooser-->
   <string name="selected_folder_label">Valgte mappe:</string>
   <string name="create_folder_label">Opret mappe</string>
@@ -220,4 +229,5 @@
   <string name="folder_not_empty_dialog_title">Mappen er ikke tom</string>
   <string name="folder_not_empty_dialog_msg">Mappen du har valgt er ikke tom. Medie downloads og andre filer vil blive placeret i denne mappe. Forsæt alligevel?</string>
   <string name="set_to_default_folder">Vælg standard mappe</string>
+  <!--Online feed view-->
 </resources>

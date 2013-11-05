@@ -2,6 +2,13 @@ package de.danoeh.antennapod.activity;
 
 import java.util.Date;
 
+import android.support.v4.app.NavUtils;
+import android.support.v7.app.ActionBarActivity;
+import android.view.Menu;
+import android.view.MenuItem;
+import de.danoeh.antennapod.activity.gpoddernet.GpodnetMainActivity;
+import org.apache.commons.lang3.StringUtils;
+
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.DialogInterface;
@@ -12,10 +19,6 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.Button;
 import android.widget.EditText;
-
-import com.actionbarsherlock.app.SherlockActivity;
-import com.actionbarsherlock.view.Menu;
-import com.actionbarsherlock.view.MenuItem;
 
 import de.danoeh.antennapod.AppConfig;
 import de.danoeh.antennapod.R;
@@ -29,13 +32,14 @@ import de.danoeh.antennapod.util.StorageUtils;
 import de.danoeh.antennapod.util.URLChecker;
 
 /** Activity for adding a Feed */
-public class AddFeedActivity extends SherlockActivity {
+public class AddFeedActivity extends ActionBarActivity {
 	private static final String TAG = "AddFeedActivity";
 
 	private DownloadRequester requester;
 
 	private EditText etxtFeedurl;
 	private Button butBrowseMiroGuide;
+    private Button butBrowserGpoddernet;
 	private Button butOpmlImport;
 	private Button butConfirm;
 	private Button butCancel;
@@ -44,6 +48,9 @@ public class AddFeedActivity extends SherlockActivity {
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
+		if (AppConfig.DEBUG)
+			Log.d(TAG, "Was started with Intent " + getIntent().getAction()
+					+ " and Data " + getIntent().getDataString());
 		setTheme(UserPreferences.getTheme());
 		super.onCreate(savedInstanceState);
 		getSupportActionBar().setDisplayHomeAsUpEnabled(true);
@@ -54,7 +61,12 @@ public class AddFeedActivity extends SherlockActivity {
 		progDialog = new ProgressDialog(this);
 
 		etxtFeedurl = (EditText) findViewById(R.id.etxtFeedurl);
+		if (StringUtils.equals(getIntent().getAction(), Intent.ACTION_VIEW)) {
+			etxtFeedurl.setText(getIntent().getDataString());
+		}
+
 		butBrowseMiroGuide = (Button) findViewById(R.id.butBrowseMiroguide);
+        butBrowserGpoddernet = (Button) findViewById(R.id.butBrowseGpoddernet);
 		butOpmlImport = (Button) findViewById(R.id.butOpmlImport);
 		butConfirm = (Button) findViewById(R.id.butConfirm);
 		butCancel = (Button) findViewById(R.id.butCancel);
@@ -67,6 +79,13 @@ public class AddFeedActivity extends SherlockActivity {
 						MiroGuideMainActivity.class));
 			}
 		});
+        butBrowserGpoddernet.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(AddFeedActivity.this,
+                        GpodnetMainActivity.class));
+            }
+        });
 
 		butOpmlImport.setOnClickListener(new OnClickListener() {
 
@@ -101,7 +120,7 @@ public class AddFeedActivity extends SherlockActivity {
 		if (intent.getAction() != null
 				&& intent.getAction().equals(Intent.ACTION_SEND)) {
 			if (AppConfig.DEBUG)
-				Log.d(TAG, "Was started with ACTION_SEND intent");
+				Log.d(TAG, "Resuming with ACTION_SEND intent");
 			String text = intent.getStringExtra(Intent.EXTRA_TEXT);
 			if (text != null) {
 				etxtFeedurl.setText(text);
@@ -152,7 +171,7 @@ public class AddFeedActivity extends SherlockActivity {
 						}
 
 						@Override
-						public void onConnectionFailure(int reason) {
+						public void onConnectionFailure(DownloadError reason) {
 							handleDownloadError(reason);
 						}
 					});
@@ -168,11 +187,11 @@ public class AddFeedActivity extends SherlockActivity {
 		progDialog.setMessage(getString(R.string.loading_label));
 	}
 
-	private void handleDownloadError(int reason) {
+	private void handleDownloadError(DownloadError reason) {
 		final AlertDialog errorDialog = new AlertDialog.Builder(this).create();
 		errorDialog.setTitle(R.string.error_label);
 		errorDialog.setMessage(getString(R.string.error_msg_prefix) + " "
-				+ DownloadError.getErrorString(this, reason));
+				+ reason.getErrorString(this));
 		errorDialog.setButton(getString(android.R.string.ok),
 				new DialogInterface.OnClickListener() {
 					@Override
@@ -188,17 +207,17 @@ public class AddFeedActivity extends SherlockActivity {
 
 	@Override
 	public boolean onCreateOptionsMenu(Menu menu) {
+        super.onCreateOptionsMenu(menu);
 		return true;
 	}
+
+
 
 	@Override
 	public boolean onOptionsItemSelected(MenuItem item) {
 		switch (item.getItemId()) {
 		case android.R.id.home:
-			Intent intent = new Intent(this, MainActivity.class);
-			intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
-					| Intent.FLAG_ACTIVITY_NEW_TASK);
-			startActivity(intent);
+            finish();
 			return true;
 		default:
 			return false;

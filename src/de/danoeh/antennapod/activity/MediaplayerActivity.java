@@ -3,26 +3,24 @@ package de.danoeh.antennapod.activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.res.Configuration;
 import android.graphics.PixelFormat;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.support.v7.app.ActionBarActivity;
 import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.widget.ImageButton;
 import android.widget.SeekBar;
 import android.widget.SeekBar.OnSeekBarChangeListener;
 import android.widget.TextView;
 
-import com.actionbarsherlock.app.SherlockFragmentActivity;
-import com.actionbarsherlock.view.Menu;
-import com.actionbarsherlock.view.MenuInflater;
-import com.actionbarsherlock.view.MenuItem;
-
 import de.danoeh.antennapod.AppConfig;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.asynctask.FlattrClickWorker;
 import de.danoeh.antennapod.dialog.TimeDialog;
-import de.danoeh.antennapod.feed.FeedManager;
 import de.danoeh.antennapod.preferences.UserPreferences;
 import de.danoeh.antennapod.service.PlaybackService;
 import de.danoeh.antennapod.util.Converter;
@@ -36,11 +34,9 @@ import de.danoeh.antennapod.util.playback.PlaybackController;
  * Provides general features which are both needed for playing audio and video
  * files.
  */
-public abstract class MediaplayerActivity extends SherlockFragmentActivity
+public abstract class MediaplayerActivity extends ActionBarActivity
 		implements OnSeekBarChangeListener {
 	private static final String TAG = "MediaplayerActivity";
-
-	protected FeedManager manager;
 
 	protected PlaybackController controller;
 
@@ -133,7 +129,16 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 			public void onPlaybackEnd() {
 				finish();
 			}
+
+			@Override
+			public void onPlaybackSpeedChange() {
+				MediaplayerActivity.this.onPlaybackSpeedChange();
+			}
 		};
+
+	}
+
+	protected void onPlaybackSpeedChange() {
 
 	}
 
@@ -148,9 +153,9 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 		if (AppConfig.DEBUG)
 			Log.d(TAG, "Creating Activity");
 		StorageUtils.checkStorageAvailability(this);
+        setVolumeControlStream(AudioManager.STREAM_MUSIC);
 
-		orientation = getResources().getConfiguration().orientation;
-		manager = FeedManager.getInstance();
+        orientation = getResources().getConfiguration().orientation;
 		getWindow().setFormat(PixelFormat.TRANSPARENT);
 		getSupportActionBar().setDisplayHomeAsUpEnabled(true);
 	}
@@ -217,13 +222,15 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 
 	@Override
 	public boolean onCreateOptionsMenu(Menu menu) {
-		MenuInflater inflater = new MenuInflater(this);
+        super.onCreateOptionsMenu(menu);
+		MenuInflater inflater = getMenuInflater();
 		inflater.inflate(R.menu.mediaplayer, menu);
 		return true;
 	}
 
 	@Override
 	public boolean onPrepareOptionsMenu(Menu menu) {
+        super.onPrepareOptionsMenu(menu);
 		Playable media = controller.getMedia();
 
 		menu.findItem(R.id.support_item).setVisible(
@@ -331,13 +338,6 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 		controller.init();
 	}
 
-	@Override
-	public void onConfigurationChanged(Configuration newConfig) {
-		super.onConfigurationChanged(newConfig);
-		// ignore orientation change
-
-	}
-
 	/**
 	 * Called by 'handleStatus()' when the PlaybackService is in the
 	 * AWAITING_VIDEO_SURFACE state.
@@ -399,7 +399,7 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 	}
 
 	protected void setupGUI() {
-		setContentView(R.layout.mediaplayer_activity);
+		setContentView(getContentViewResourceId());
 		sbPosition = (SeekBar) findViewById(R.id.sbPosition);
 		txtvPosition = (TextView) findViewById(R.id.txtvPosition);
 		txtvLength = (TextView) findViewById(R.id.txtvLength);
@@ -420,6 +420,8 @@ public abstract class MediaplayerActivity extends SherlockFragmentActivity
 		butRev.setOnClickListener(controller.newOnRevButtonClickListener());
 
 	}
+
+	protected abstract int getContentViewResourceId();
 
 	void handleError(int errorCode) {
 		final AlertDialog.Builder errorDialog = new AlertDialog.Builder(this);

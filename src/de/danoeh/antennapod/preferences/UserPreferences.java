@@ -2,9 +2,14 @@ package de.danoeh.antennapod.preferences;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import de.danoeh.antennapod.gpoddernet.GpodnetService;
 import org.apache.commons.lang3.StringUtils;
+import org.json.JSONArray;
+import org.json.JSONException;
 
 import android.app.AlarmManager;
 import android.app.PendingIntent;
@@ -37,12 +42,18 @@ public class UserPreferences implements
 	public static final String PREF_AUTO_DELETE = "prefAutoDelete";
 	public static final String PREF_THEME = "prefTheme";
 	public static final String PREF_DATA_FOLDER = "prefDataFolder";
+	public static final String PREF_ENABLE_AUTODL = "prefEnableAutoDl";
 	public static final String PREF_ENABLE_AUTODL_WIFI_FILTER = "prefEnableAutoDownloadWifiFilter";
 	private static final String PREF_AUTODL_SELECTED_NETWORKS = "prefAutodownloadSelectedNetworks";
 	public static final String PREF_EPISODE_CACHE_SIZE = "prefEpisodeCacheSize";
+	private static final String PREF_PLAYBACK_SPEED = "prefPlaybackSpeed";
+	private static final String PREF_PLAYBACK_SPEED_ARRAY = "prefPlaybackSpeedArray";
+	public static final String PREF_PAUSE_PLAYBACK_FOR_FOCUS_LOSS = "prefPauseForFocusLoss";
+
+	private static int EPISODE_CACHE_SIZE_UNLIMITED = -1;
 
 	private static UserPreferences instance;
-	private Context context;
+	private final Context context;
 
 	// Preferences
 	private boolean pauseOnHeadsetDisconnect;
@@ -53,9 +64,13 @@ public class UserPreferences implements
 	private boolean displayOnlyEpisodes;
 	private boolean autoDelete;
 	private int theme;
+	private boolean enableAutodownload;
 	private boolean enableAutodownloadWifiFilter;
 	private String[] autodownloadSelectedNetworks;
 	private int episodeCacheSize;
+	private String playbackSpeed;
+	private String[] playbackSpeedArray;
+	private boolean pauseForFocusLoss;
 
 	private UserPreferences(Context context) {
 		this.context = context;
@@ -64,7 +79,7 @@ public class UserPreferences implements
 
 	/**
 	 * Sets up the UserPreferences class.
-	 * 
+	 *
 	 * @throws IllegalArgumentException
 	 *             if context is null
 	 * */
@@ -79,11 +94,14 @@ public class UserPreferences implements
 		createNoMediaFile();
 		PreferenceManager.getDefaultSharedPreferences(context)
 				.registerOnSharedPreferenceChangeListener(instance);
+
 	}
 
 	private void loadPreferences() {
 		SharedPreferences sp = PreferenceManager
 				.getDefaultSharedPreferences(context);
+		EPISODE_CACHE_SIZE_UNLIMITED = context.getResources().getInteger(
+				R.integer.episode_cache_size_unlimited);
 		pauseOnHeadsetDisconnect = sp.getBoolean(
 				PREF_PAUSE_ON_HEADSET_DISCONNECT, true);
 		followQueue = sp.getBoolean(PREF_FOLLOW_QUEUE, false);
@@ -99,8 +117,13 @@ public class UserPreferences implements
 				PREF_ENABLE_AUTODL_WIFI_FILTER, false);
 		autodownloadSelectedNetworks = StringUtils.split(
 				sp.getString(PREF_AUTODL_SELECTED_NETWORKS, ""), ',');
-		episodeCacheSize = Integer.valueOf(sp.getString(
+		episodeCacheSize = readEpisodeCacheSizeInternal(sp.getString(
 				PREF_EPISODE_CACHE_SIZE, "20"));
+		enableAutodownload = sp.getBoolean(PREF_ENABLE_AUTODL, false);
+		playbackSpeed = sp.getString(PREF_PLAYBACK_SPEED, "1.0");
+		playbackSpeedArray = readPlaybackSpeedArray(sp.getString(
+				PREF_PLAYBACK_SPEED_ARRAY, null));
+		pauseForFocusLoss = sp.getBoolean(PREF_PAUSE_PLAYBACK_FOR_FOCUS_LOSS, false);
 	}
 
 	private int readThemeValue(String valueFromPrefs) {
@@ -117,6 +140,45 @@ public class UserPreferences implements
 	private long readUpdateInterval(String valueFromPrefs) {
 		int hours = Integer.parseInt(valueFromPrefs);
 		return TimeUnit.HOURS.toMillis(hours);
+	}
+
+	private int readEpisodeCacheSizeInternal(String valueFromPrefs) {
+		if (valueFromPrefs.equals(context
+				.getString(R.string.pref_episode_cache_unlimited))) {
+			return EPISODE_CACHE_SIZE_UNLIMITED;
+		} else {
+			return Integer.valueOf(valueFromPrefs);
+		}
+	}
+
+	private String[] readPlaybackSpeedArray(String valueFromPrefs) {
+		String[] selectedSpeeds = null;
+		// If this preference hasn't been set yet, return the default options
+		if (valueFromPrefs == null) {
+			String[] allSpeeds = context.getResources().getStringArray(
+					R.array.playback_speed_values);
+			List<String> speedList = new LinkedList<String>();
+			for (String speedStr : allSpeeds) {
+				float speed = Float.parseFloat(speedStr);
+				if (speed < 2.0001 && speed * 10 % 1 == 0) {
+					speedList.add(speedStr);
+				}
+			}
+			selectedSpeeds = speedList.toArray(new String[speedList.size()]);
+		} else {
+			try {
+				JSONArray jsonArray = new JSONArray(valueFromPrefs);
+				selectedSpeeds = new String[jsonArray.length()];
+				for (int i = 0; i < jsonArray.length(); i++) {
+					selectedSpeeds[i] = jsonArray.getString(i);
+				}
+			} catch (JSONException e) {
+				Log.e(TAG,
+						"Got JSON error when trying to get speeds from JSONArray");
+				e.printStackTrace();
+			}
+		}
+		return selectedSpeeds;
 	}
 
 	private static void instanceAvailable() {
@@ -153,7 +215,8 @@ public class UserPreferences implements
 
 	public static boolean isDisplayOnlyEpisodes() {
 		instanceAvailable();
-		return instance.displayOnlyEpisodes;
+		//return instance.displayOnlyEpisodes;
+        return false;
 	}
 
 	public static boolean isAutoDelete() {
@@ -176,9 +239,38 @@ public class UserPreferences implements
 		return instance.autodownloadSelectedNetworks;
 	}
 
+	public static int getEpisodeCacheSizeUnlimited() {
+		return EPISODE_CACHE_SIZE_UNLIMITED;
+	}
+
+	public static String getPlaybackSpeed() {
+		instanceAvailable();
+		return instance.playbackSpeed;
+	}
+
+	public static String[] getPlaybackSpeedArray() {
+		instanceAvailable();
+		return instance.playbackSpeedArray;
+	}
+
+	/**
+	 * Returns the capacity of the episode cache. This method will return the
+	 * negative integer EPISODE_CACHE_SIZE_UNLIMITED if the cache size is set to
+	 * 'unlimited'.
+	 */
 	public static int getEpisodeCacheSize() {
 		instanceAvailable();
 		return instance.episodeCacheSize;
+	}
+
+	public static boolean isEnableAutodownload() {
+		instanceAvailable();
+		return instance.enableAutodownload;
+	}
+	
+	public static boolean shouldPauseForFocusLoss() {
+		instanceAvailable();
+		return instance.pauseForFocusLoss;
 	}
 
 	@Override
@@ -216,9 +308,33 @@ public class UserPreferences implements
 			autodownloadSelectedNetworks = StringUtils.split(
 					sp.getString(PREF_AUTODL_SELECTED_NETWORKS, ""), ',');
 		} else if (key.equals(PREF_EPISODE_CACHE_SIZE)) {
-			episodeCacheSize = Integer.valueOf(sp.getString(
+			episodeCacheSize = readEpisodeCacheSizeInternal(sp.getString(
 					PREF_EPISODE_CACHE_SIZE, "20"));
+		} else if (key.equals(PREF_ENABLE_AUTODL)) {
+			enableAutodownload = sp.getBoolean(PREF_ENABLE_AUTODL, false);
+		} else if (key.equals(PREF_PLAYBACK_SPEED)) {
+			playbackSpeed = sp.getString(PREF_PLAYBACK_SPEED, "1.0");
+		} else if (key.equals(PREF_PLAYBACK_SPEED_ARRAY)) {
+			playbackSpeedArray = readPlaybackSpeedArray(sp.getString(
+					PREF_PLAYBACK_SPEED_ARRAY, null));
+		} else if (key.equals(PREF_PAUSE_PLAYBACK_FOR_FOCUS_LOSS)) {
+			pauseForFocusLoss = sp.getBoolean(PREF_PAUSE_PLAYBACK_FOR_FOCUS_LOSS, false);
 		}
+	}
+
+	public static void setPlaybackSpeed(String speed) {
+		PreferenceManager.getDefaultSharedPreferences(instance.context).edit()
+				.putString(PREF_PLAYBACK_SPEED, speed).apply();
+	}
+
+	public static void setPlaybackSpeedArray(String[] speeds) {
+		JSONArray jsonArray = new JSONArray();
+		for (String speed : speeds) {
+			jsonArray.put(speed);
+		}
+		PreferenceManager.getDefaultSharedPreferences(instance.context).edit()
+				.putString(PREF_PLAYBACK_SPEED_ARRAY, jsonArray.toString())
+				.apply();
 	}
 
 	public static void setAutodownloadSelectedNetworks(Context context,
@@ -231,10 +347,24 @@ public class UserPreferences implements
 		editor.commit();
 	}
 
+    /**
+     *  Sets the update interval value. Should only be used for testing purposes!
+     * */
+    public static void setUpdateInterval(Context context, long newValue) {
+        instanceAvailable();
+        SharedPreferences.Editor editor = PreferenceManager
+                .getDefaultSharedPreferences(context.getApplicationContext())
+                .edit();
+        editor.putString(PREF_UPDATE_INTERVAL,
+                String.valueOf(newValue));
+        editor.commit();
+        instance.updateInterval = newValue;
+    }
+
 	/**
 	 * Return the folder where the app stores all of its data. This method will
 	 * return the standard data folder if none has been set by the user.
-	 * 
+	 *
 	 * @param type
 	 *            The name of the folder inside the data folder. May be null
 	 *            when accessing the root of the data folder.
@@ -343,7 +473,7 @@ public class UserPreferences implements
 
 	/**
 	 * Updates alarm registered with the AlarmManager service or deactivates it.
-	 * 
+	 *
 	 * @param millis
 	 *            new value to register with AlarmManager. If millis is 0, the
 	 *            alarm is deactivated.
@@ -362,11 +492,18 @@ public class UserPreferences implements
 			alarmManager.setRepeating(AlarmManager.RTC_WAKEUP, millis, millis,
 					updateIntent);
 			if (AppConfig.DEBUG)
-				Log.d(TAG, "Changed alarm to new intervall");
+				Log.d(TAG, "Changed alarm to new interval");
 		} else {
 			if (AppConfig.DEBUG)
 				Log.d(TAG, "Automatic update was deactivated");
 		}
 	}
 
+    /**
+     * Reads episode cache size as it is saved in the episode_cache_size_values array.
+     * */
+    public static int readEpisodeCacheSize(String valueFromPrefs) {
+        instanceAvailable();
+        return instance.readEpisodeCacheSizeInternal(valueFromPrefs);
+    }
 }

@@ -2,6 +2,7 @@ package de.danoeh.antennapod.util.playback;
 
 import java.io.InputStream;
 import java.util.List;
+import java.util.concurrent.Callable;
 
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
@@ -24,7 +25,6 @@ public class ExternalMedia implements Playable {
 
 	private String episodeTitle;
 	private String feedTitle;
-	private String shownotes;
 	private MediaType mediaType = MediaType.AUDIO;
 	private List<Chapter> chapters;
 	private int duration;
@@ -62,8 +62,6 @@ public class ExternalMedia implements Playable {
 
 	@Override
 	public void loadMetadata() throws PlayableException {
-		final String tmpFileName = "tmpExternalMediaimage";
-
 		MediaMetadataRetriever mmr = new MediaMetadataRetriever();
 		try {
 			mmr.setDataSource(source);
@@ -71,14 +69,29 @@ public class ExternalMedia implements Playable {
 			e.printStackTrace();
 			throw new PlayableException(
 					"IllegalArgumentException when setting up MediaMetadataReceiver");
+		} catch (RuntimeException e) {
+			// http://code.google.com/p/android/issues/detail?id=39770
+			e.printStackTrace();
+			throw new PlayableException(
+					"RuntimeException when setting up MediaMetadataRetriever");
 		}
 		episodeTitle = mmr
 				.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
 		feedTitle = mmr
 				.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM);
-		duration = Integer.parseInt(mmr
+        try {
+		    duration = Integer.parseInt(mmr
 				.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+        } catch (NumberFormatException e) {
+            e.printStackTrace();
+            throw new PlayableException("NumberFormatException when reading duration of media file");
+        }
 		ChapterUtils.loadChaptersFromFileUrl(this);
+	}
+
+	@Override
+	public void loadChapterMarks() {
+
 	}
 
 	@Override
@@ -87,8 +100,13 @@ public class ExternalMedia implements Playable {
 	}
 
 	@Override
-	public void loadShownotes(ShownoteLoaderCallback callback) {
-		callback.onShownotesLoaded(null);
+	public Callable<String> loadShownotes() {
+		return new Callable<String>() {
+            @Override
+            public String call() throws Exception {
+                return "";
+            }
+        };
 	}
 
 	@Override
@@ -214,12 +232,14 @@ public class ExternalMedia implements Playable {
 
 	@Override
 	public String getImageLoaderCacheKey() {
-		return new Playable.DefaultPlayableImageLoader(this).getImageLoaderCacheKey();
+		return new Playable.DefaultPlayableImageLoader(this)
+				.getImageLoaderCacheKey();
 	}
 
 	@Override
 	public InputStream reopenImageInputStream(InputStream input) {
-		return new Playable.DefaultPlayableImageLoader(this).reopenImageInputStream(input);
+		return new Playable.DefaultPlayableImageLoader(this)
+				.reopenImageInputStream(input);
 	}
 
 }

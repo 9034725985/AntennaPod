@@ -5,17 +5,12 @@ import android.content.Intent;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.MotionEvent;
-import android.view.SurfaceHolder;
-import android.view.View;
-import android.view.WindowManager;
+import android.view.*;
 import android.view.animation.AnimationUtils;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.VideoView;
-
-import com.actionbarsherlock.view.Window;
 
 import de.danoeh.antennapod.AppConfig;
 import de.danoeh.antennapod.R;
@@ -285,6 +280,11 @@ public class VideoplayerActivity extends MediaplayerActivity implements
 		videoOverlay.startAnimation(AnimationUtils.loadAnimation(this,
 				R.anim.fade_out));
 		videoOverlay.setVisibility(View.GONE);
+	}
+
+	@Override
+	protected int getContentViewResourceId() {
+		return R.layout.videoplayer_activity;
 	}
 
 }
